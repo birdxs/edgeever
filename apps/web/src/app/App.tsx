@@ -1,10 +1,12 @@
 import {
   docToMarkdown,
+  type ApiToken,
   type AuthSession,
   type AuthUser,
   type MemoDetail,
   type MemoSummary,
   type Notebook,
+  type TagSummary,
   type TiptapDoc,
 } from "@edgeever/shared";
 import Image from "@tiptap/extension-image";
@@ -25,16 +27,19 @@ import {
   History,
   ImageIcon,
   Inbox,
+  KeyRound,
   LayoutList,
   LockKeyhole,
   LogOut,
   Merge,
   MoreHorizontal,
   PanelLeft,
+  Pencil,
   Plus,
   RotateCcw,
   Save,
   Search,
+  ShieldCheck,
   Sparkles,
   Tags,
   Trash2,
@@ -139,6 +144,8 @@ const WorkspaceApp = ({
   const [multiSelectKeyDown, setMultiSelectKeyDown] = useState(false);
   const [imageCompressionEnabled, setImageCompressionEnabled] = useState(readImageCompressionPreference);
   const [assetsOpen, setAssetsOpen] = useState(false);
+  const [tagsOpen, setTagsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [search, setSearch] = useState("");
 
   const notebooksQuery = useQuery({
@@ -221,6 +228,27 @@ const WorkspaceApp = ({
     },
   });
 
+  const updateNotebookMutation = useMutation({
+    mutationFn: ({ notebookId, name }: { notebookId: string; name: string }) =>
+      api.updateNotebook(notebookId, { name }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["notebooks"] });
+    },
+  });
+
+  const deleteNotebookMutation = useMutation({
+    mutationFn: api.deleteNotebook,
+    onSuccess: async (_data, notebookId) => {
+      if (selectedNotebookId === notebookId) {
+        setSelectedNotebookId(null);
+        setSelectedMemoId(null);
+      }
+
+      await queryClient.invalidateQueries({ queryKey: ["notebooks"] });
+      await queryClient.invalidateQueries({ queryKey: ["memos"] });
+    },
+  });
+
   const createMemoMutation = useMutation({
     mutationFn: api.createMemo,
     onSuccess: async (data) => {
@@ -276,6 +304,29 @@ const WorkspaceApp = ({
     createNotebookMutation.mutate({ name: name.trim(), parentId: parentId ?? null });
   };
 
+  const handleRenameNotebook = (notebook: Notebook) => {
+    const name = window.prompt("重命名笔记本", notebook.name);
+
+    if (!name?.trim() || name.trim() === notebook.name) {
+      return;
+    }
+
+    updateNotebookMutation.mutate({ notebookId: notebook.id, name: name.trim() });
+  };
+
+  const handleDeleteNotebook = (notebook: Notebook) => {
+    if (notebook.slug === "inbox") {
+      window.alert("Inbox 不能删除。");
+      return;
+    }
+
+    if (!window.confirm(`删除笔记本「${notebook.name}」？请先清空其中的笔记和子笔记本。`)) {
+      return;
+    }
+
+    deleteNotebookMutation.mutate(notebook.id);
+  };
+
   const handleCreateMemo = () => {
     if (!selectedNotebookId || memoView === "trash") {
       return;
@@ -323,12 +374,16 @@ const WorkspaceApp = ({
               setActivePane("memos");
             }}
             onCreateNotebook={handleCreateNotebook}
+            onRenameNotebook={handleRenameNotebook}
+            onDeleteNotebook={handleDeleteNotebook}
             onBackToList={() => setActivePane("memos")}
             onLogout={onLogout}
             isLoggingOut={isLoggingOut}
             imageCompressionEnabled={imageCompressionEnabled}
             onImageCompressionChange={setImageCompressionEnabled}
             onOpenAssets={() => setAssetsOpen(true)}
+            onOpenTags={() => setTagsOpen(true)}
+            onOpenSettings={() => setSettingsOpen(true)}
             onOpenTrash={() => {
               setMemoView("trash");
               setSelectedMemoIds(new Set());
@@ -399,6 +454,8 @@ const WorkspaceApp = ({
       </main>
       </div>
       {assetsOpen ? <AssetsDialog onClose={() => setAssetsOpen(false)} /> : null}
+      {tagsOpen ? <TagsDialog onClose={() => setTagsOpen(false)} /> : null}
+      {settingsOpen ? <SettingsDialog onClose={() => setSettingsOpen(false)} /> : null}
     </div>
   );
 };
@@ -516,12 +573,16 @@ const NotebookPane = ({
   isLoading,
   onSelect,
   onCreateNotebook,
+  onRenameNotebook,
+  onDeleteNotebook,
   onBackToList,
   onLogout,
   isLoggingOut,
   imageCompressionEnabled,
   onImageCompressionChange,
   onOpenAssets,
+  onOpenTags,
+  onOpenSettings,
   onOpenTrash,
 }: {
   authRequired: boolean;
@@ -531,12 +592,16 @@ const NotebookPane = ({
   isLoading: boolean;
   onSelect: (notebookId: string) => void;
   onCreateNotebook: (parentId?: string | null) => void;
+  onRenameNotebook: (notebook: Notebook) => void;
+  onDeleteNotebook: (notebook: Notebook) => void;
   onBackToList: () => void;
   onLogout: () => void;
   isLoggingOut: boolean;
   imageCompressionEnabled: boolean;
   onImageCompressionChange: (enabled: boolean) => void;
   onOpenAssets: () => void;
+  onOpenTags: () => void;
+  onOpenSettings: () => void;
   onOpenTrash: () => void;
 }) => {
   const tree = useMemo(() => buildNotebookTree(notebooks), [notebooks]);
@@ -577,6 +642,8 @@ const NotebookPane = ({
                 selectedNotebookId={selectedNotebookId}
                 onSelect={onSelect}
                 onCreateNotebook={onCreateNotebook}
+                onRenameNotebook={onRenameNotebook}
+                onDeleteNotebook={onDeleteNotebook}
               />
             ))}
           </div>
@@ -595,7 +662,7 @@ const NotebookPane = ({
           />
         </label>
         <div className={cn("grid gap-2", authRequired ? "grid-cols-5" : "grid-cols-4")}>
-          <Button size="icon" variant="ghost" title="标签">
+          <Button size="icon" variant="ghost" title="标签" onClick={onOpenTags}>
             <Tags className="h-4 w-4" />
           </Button>
           <Button size="icon" variant="ghost" title="资产" onClick={onOpenAssets}>
@@ -604,7 +671,7 @@ const NotebookPane = ({
           <Button size="icon" variant="ghost" title="回收站" onClick={onOpenTrash}>
             <Trash2 className="h-4 w-4" />
           </Button>
-          <Button size="icon" variant="ghost" title="设置">
+          <Button size="icon" variant="ghost" title="设置" onClick={onOpenSettings}>
             <MoreHorizontal className="h-4 w-4" />
           </Button>
           {authRequired ? (
@@ -624,16 +691,21 @@ const NotebookTreeItem = ({
   selectedNotebookId,
   onSelect,
   onCreateNotebook,
+  onRenameNotebook,
+  onDeleteNotebook,
 }: {
   node: NotebookNode;
   depth: number;
   selectedNotebookId: string | null;
   onSelect: (notebookId: string) => void;
   onCreateNotebook: (parentId?: string | null) => void;
+  onRenameNotebook: (notebook: Notebook) => void;
+  onDeleteNotebook: (notebook: Notebook) => void;
 }) => {
   const [open, setOpen] = useState(true);
   const hasChildren = node.children.length > 0;
   const selected = node.id === selectedNotebookId;
+  const isInbox = node.slug === "inbox";
 
   return (
     <div>
@@ -665,10 +737,38 @@ const NotebookTreeItem = ({
             selected ? "hover:bg-emerald-200" : "hover:bg-emerald-100"
           )}
           title="新建子笔记本"
-          onClick={() => onCreateNotebook(node.id)}
+          onClick={(event) => {
+            event.stopPropagation();
+            onCreateNotebook(node.id);
+          }}
         >
           <Plus className="h-3.5 w-3.5" />
         </button>
+        <button
+          className={cn(
+            "hidden h-6 w-6 items-center justify-center rounded-md group-hover:flex",
+            selected ? "hover:bg-emerald-200" : "hover:bg-emerald-100"
+          )}
+          title="重命名笔记本"
+          onClick={(event) => {
+            event.stopPropagation();
+            onRenameNotebook(node);
+          }}
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </button>
+        {!isInbox ? (
+          <button
+            className="hidden h-6 w-6 items-center justify-center rounded-md text-rose-600 hover:bg-rose-50 group-hover:flex"
+            title="删除笔记本"
+            onClick={(event) => {
+              event.stopPropagation();
+              onDeleteNotebook(node);
+            }}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        ) : null}
       </div>
 
       {hasChildren && open ? (
@@ -681,6 +781,8 @@ const NotebookTreeItem = ({
               selectedNotebookId={selectedNotebookId}
               onSelect={onSelect}
               onCreateNotebook={onCreateNotebook}
+              onRenameNotebook={onRenameNotebook}
+              onDeleteNotebook={onDeleteNotebook}
             />
           ))}
         </div>
@@ -1018,6 +1120,287 @@ const AssetsDialog = ({ onClose }: { onClose: () => void }) => {
               ))}
             </div>
           )}
+        </div>
+      </section>
+    </div>
+  );
+};
+
+const TagsDialog = ({ onClose }: { onClose: () => void }) => {
+  const queryClient = useQueryClient();
+  const tagsQuery = useQuery({
+    queryKey: ["tags"],
+    queryFn: () => api.listTags(),
+  });
+  const renameMutation = useMutation({
+    mutationFn: ({ tag, name }: { tag: string; name: string }) => api.renameTag(tag, name),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["tags"] }),
+        queryClient.invalidateQueries({ queryKey: ["memos"] }),
+        queryClient.invalidateQueries({ queryKey: ["memo"] }),
+      ]);
+    },
+  });
+  const deleteMutation = useMutation({
+    mutationFn: api.deleteTag,
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["tags"] }),
+        queryClient.invalidateQueries({ queryKey: ["memos"] }),
+        queryClient.invalidateQueries({ queryKey: ["memo"] }),
+      ]);
+    },
+  });
+  const tags = tagsQuery.data?.tags ?? [];
+
+  const handleRename = (tag: TagSummary) => {
+    const name = window.prompt("重命名标签", tag.name);
+
+    if (!name?.trim() || name.trim() === tag.name) {
+      return;
+    }
+
+    renameMutation.mutate({ tag: tag.name, name: name.trim() });
+  };
+
+  const handleDelete = (tag: TagSummary) => {
+    if (!window.confirm(`从 ${tag.memoCount} 条笔记中移除标签 #${tag.name}？`)) {
+      return;
+    }
+
+    deleteMutation.mutate(tag.name);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-slate-950/35 p-0 sm:items-center sm:justify-center sm:p-6">
+      <section className="flex max-h-[88dvh] w-full flex-col rounded-t-md bg-white shadow-panel sm:max-w-[680px] sm:rounded-md">
+        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-emerald-100 px-4 py-3 sm:px-5">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-base font-semibold text-slate-950">
+              <Tags className="h-4 w-4 text-emerald-700" />
+              标签
+            </div>
+            <div className="mt-1 truncate text-xs text-slate-500">{tags.length} tags</div>
+          </div>
+          <Button size="icon" variant="ghost" title="关闭" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </header>
+
+        <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
+          {tagsQuery.isLoading ? (
+            <div className="px-2 py-8 text-center text-sm text-slate-500">加载中</div>
+          ) : tags.length === 0 ? (
+            <div className="rounded-md border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-500">
+              暂无标签
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {tags.map((tag) => (
+                <div
+                  key={tag.name}
+                  className="flex min-h-12 items-center gap-3 rounded-md border border-emerald-100 bg-emerald-50/30 px-3 py-2"
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-semibold text-slate-950">#{tag.name}</span>
+                    <span className="mt-1 block text-xs text-slate-500">
+                      {tag.memoCount} memos{tag.updatedAt ? ` · ${formatDateTime(tag.updatedAt)}` : ""}
+                    </span>
+                  </span>
+                  <Button size="icon" variant="ghost" title="重命名标签" onClick={() => handleRename(tag)}>
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                  <Button size="icon" variant="danger" title="删除标签" onClick={() => handleDelete(tag)}>
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+};
+
+const DEFAULT_TOKEN_SCOPES = ["read:notebooks", "read:memos", "read:tags"];
+
+const SettingsDialog = ({ onClose }: { onClose: () => void }) => {
+  const queryClient = useQueryClient();
+  const [name, setName] = useState("Local Agent");
+  const [selectedScopes, setSelectedScopes] = useState<Set<string>>(() => new Set(DEFAULT_TOKEN_SCOPES));
+  const [createdToken, setCreatedToken] = useState<{ token: string; apiToken: ApiToken } | null>(null);
+  const tokensQuery = useQuery({
+    queryKey: ["api-tokens"],
+    queryFn: () => api.listApiTokens(),
+  });
+  const availableScopes = tokensQuery.data?.availableScopes ?? [
+    "read:notebooks",
+    "write:notebooks",
+    "read:memos",
+    "write:memos",
+    "read:resources",
+    "write:resources",
+    "read:tags",
+    "write:tags",
+  ];
+  const createMutation = useMutation({
+    mutationFn: api.createApiToken,
+    onSuccess: async (data) => {
+      setCreatedToken(data);
+      setName("");
+      setSelectedScopes(new Set(DEFAULT_TOKEN_SCOPES));
+      await queryClient.invalidateQueries({ queryKey: ["api-tokens"] });
+    },
+  });
+  const revokeMutation = useMutation({
+    mutationFn: api.revokeApiToken,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["api-tokens"] });
+    },
+  });
+  const tokens = tokensQuery.data?.apiTokens ?? [];
+
+  const toggleScope = (scope: string) => {
+    setSelectedScopes((current) => {
+      const next = new Set(current);
+
+      if (next.has(scope)) {
+        next.delete(scope);
+      } else {
+        next.add(scope);
+      }
+
+      return next;
+    });
+  };
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const scopes = Array.from(selectedScopes);
+
+    if (!name.trim() || scopes.length === 0) {
+      return;
+    }
+
+    createMutation.mutate({ name: name.trim(), scopes });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-slate-950/35 p-0 sm:items-center sm:justify-center sm:p-6">
+      <section className="flex max-h-[92dvh] w-full flex-col rounded-t-md bg-white shadow-panel sm:max-w-[820px] sm:rounded-md">
+        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-emerald-100 px-4 py-3 sm:px-5">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-base font-semibold text-slate-950">
+              <KeyRound className="h-4 w-4 text-emerald-700" />
+              设置
+            </div>
+            <div className="mt-1 truncate text-xs text-slate-500">API Token / MCP / CLI</div>
+          </div>
+          <Button size="icon" variant="ghost" title="关闭" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </header>
+
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
+          {createdToken ? (
+            <div className="mb-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-3">
+              <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-emerald-950">
+                <ShieldCheck className="h-4 w-4" />
+                Token 已生成
+              </div>
+              <div className="flex gap-2">
+                <input
+                  className="h-9 min-w-0 flex-1 rounded-md border border-emerald-200 bg-white px-3 font-mono text-xs text-slate-900 outline-none"
+                  readOnly
+                  value={createdToken.token}
+                />
+                <Button
+                  size="sm"
+                  variant="solid"
+                  type="button"
+                  onClick={() => void navigator.clipboard?.writeText(createdToken.token)}
+                >
+                  复制
+                </Button>
+              </div>
+              <div className="mt-2 text-xs text-emerald-800">明文 Token 只显示这一次。</div>
+            </div>
+          ) : null}
+
+          <form className="mb-5 rounded-md border border-emerald-100 bg-emerald-50/30 p-3" onSubmit={handleSubmit}>
+            <div className="mb-3 flex flex-col gap-2 sm:flex-row">
+              <input
+                className="h-9 min-w-0 flex-1 rounded-md border border-emerald-100 bg-white px-3 text-sm outline-none focus:border-emerald-300"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                placeholder="Token 名称"
+              />
+              <Button size="md" variant="solid" type="submit" disabled={createMutation.isPending}>
+                <KeyRound className="h-4 w-4" />
+                生成 Token
+              </Button>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {availableScopes.map((scope) => (
+                <label
+                  key={scope}
+                  className="flex min-h-9 items-center gap-2 rounded-md border border-emerald-100 bg-white px-2 text-sm text-slate-700"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedScopes.has(scope)}
+                    onChange={() => toggleScope(scope)}
+                    className="h-4 w-4 shrink-0 rounded border-emerald-300 text-emerald-600"
+                  />
+                  <span className="min-w-0 truncate font-mono text-xs">{scope}</span>
+                </label>
+              ))}
+            </div>
+          </form>
+
+          <div className="space-y-2">
+            {tokensQuery.isLoading ? (
+              <div className="px-2 py-8 text-center text-sm text-slate-500">加载中</div>
+            ) : tokens.length === 0 ? (
+              <div className="rounded-md border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-500">
+                暂无 API Token
+              </div>
+            ) : (
+              tokens.map((token) => (
+                <div
+                  key={token.id}
+                  className={cn(
+                    "flex min-h-16 items-center gap-3 rounded-md border px-3 py-2",
+                    token.isRevoked ? "border-slate-200 bg-slate-50 opacity-70" : "border-emerald-100 bg-white"
+                  )}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-semibold text-slate-950">{token.name}</span>
+                    <span className="mt-1 block truncate text-xs text-slate-500">
+                      {token.scopes.join(", ") || "no scopes"}
+                    </span>
+                    <span className="mt-1 block text-xs text-slate-400">
+                      {token.lastUsedAt ? `Last used ${formatDateTime(token.lastUsedAt)}` : "Never used"}
+                    </span>
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="danger"
+                    disabled={token.isRevoked || revokeMutation.isPending}
+                    onClick={() => {
+                      if (window.confirm(`撤销 Token「${token.name}」？`)) {
+                        revokeMutation.mutate(token.id);
+                      }
+                    }}
+                  >
+                    撤销
+                  </Button>
+                </div>
+              ))
+            )}
+          </div>
         </div>
       </section>
     </div>

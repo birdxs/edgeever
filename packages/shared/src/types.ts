@@ -80,6 +80,27 @@ export type ResourceStorageSummary = {
   attachmentCount: number;
 };
 
+export type ApiToken = {
+  id: string;
+  name: string;
+  scopes: string[];
+  lastUsedAt: string | null;
+  expiresAt: string | null;
+  isRevoked: boolean;
+  createdAt: string;
+};
+
+export type CreatedApiToken = {
+  token: string;
+  apiToken: ApiToken;
+};
+
+export type TagSummary = {
+  name: string;
+  memoCount: number;
+  updatedAt: string | null;
+};
+
 export type AuthUser = {
   id: string;
   username: string;

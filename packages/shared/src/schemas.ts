@@ -38,9 +38,21 @@ export const LoginSchema = z.object({
   password: z.string().min(1).max(512),
 });
 
+export const ApiTokenCreateSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  scopes: z.array(z.string().trim().min(1).max(80)).min(1).max(32),
+  expiresAt: z.string().datetime().nullable().optional(),
+});
+
+export const TagRenameSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+});
+
 export type NotebookCreateInput = z.infer<typeof NotebookCreateSchema>;
 export type NotebookUpdateInput = z.infer<typeof NotebookUpdateSchema>;
 export type MemoCreateInput = z.infer<typeof MemoCreateSchema>;
 export type MemoUpdateInput = z.infer<typeof MemoUpdateSchema>;
 export type MergeMemosInput = z.infer<typeof MergeMemosSchema>;
 export type LoginInput = z.infer<typeof LoginSchema>;
+export type ApiTokenCreateInput = z.infer<typeof ApiTokenCreateSchema>;
+export type TagRenameInput = z.infer<typeof TagRenameSchema>;

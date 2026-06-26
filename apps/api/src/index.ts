@@ -3,14 +3,18 @@ import {
   docToMarkdown,
   docToText,
   emptyDoc,
+  ApiTokenCreateSchema,
   LoginSchema,
   markdownToDoc,
   MemoCreateSchema,
   MemoUpdateSchema,
   MergeMemosSchema,
   normalizeTags,
+  TagRenameSchema,
   NotebookCreateSchema,
   NotebookUpdateSchema,
+  type ApiToken,
+  type CreatedApiToken,
   type MemoDetail,
   type MemoRevision,
   type MemoSummary,
@@ -18,6 +22,7 @@ import {
   type Resource,
   type ResourceListItem,
   type ResourceStorageSummary,
+  type TagSummary,
   type TiptapDoc,
 } from "@edgeever/shared";
 import { zValidator } from "@hono/zod-validator";
@@ -41,6 +46,7 @@ type AuthContext = {
   actorId: string | null;
   username: string;
   displayName: string | null;
+  scopes: string[];
   sessionId?: string;
   tokenId?: string;
 };
@@ -116,7 +122,23 @@ type ApiTokenRow = {
   id: string;
   name: string;
   scopes_json: string;
+  last_used_at: string | null;
   expires_at: string | null;
+  is_revoked: number;
+  created_at: string;
+};
+
+type TagSummaryRow = {
+  name: string;
+  memo_count: number;
+  updated_at: string | null;
+};
+
+type MemoTagUpdateRow = {
+  id: string;
+  title: string | null;
+  tags_json: string;
+  content_text: string;
 };
 
 type ResourceRow = {
@@ -161,6 +183,19 @@ const DEFAULT_SESSION_TTL_DAYS = 30;
 const DEFAULT_R2_BUCKET_NAME = "edgeever-resources";
 const MAX_IMAGE_UPLOAD_BYTES = 10 * 1024 * 1024;
 const REVISION_SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
+const API_TOKEN_BYTES = 32;
+const API_TOKEN_PREFIX = "eev";
+const ALL_TOKEN_SCOPES = [
+  "read:notebooks",
+  "write:notebooks",
+  "read:memos",
+  "write:memos",
+  "read:resources",
+  "write:resources",
+  "read:tags",
+  "write:tags",
+] as const;
+type TokenScope = (typeof ALL_TOKEN_SCOPES)[number];
 const SUPPORTED_IMAGE_MIME_TYPES = new Set([
   "image/png",
   "image/jpeg",
@@ -177,6 +212,16 @@ app.use(
     origin: ["http://127.0.0.1:5173", "http://localhost:5173"],
     allowHeaders: ["Content-Type", "Authorization"],
     allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    credentials: true,
+  })
+);
+
+app.use(
+  "/mcp",
+  cors({
+    origin: ["http://127.0.0.1:5173", "http://localhost:5173"],
+    allowHeaders: ["Content-Type", "Authorization"],
+    allowMethods: ["GET", "POST", "OPTIONS"],
     credentials: true,
   })
 );
@@ -279,6 +324,7 @@ app.use("/api/v1/*", async (c, next) => {
       actorId: null,
       username: "owner",
       displayName: "Owner",
+      scopes: [],
     });
     await next();
     return;
@@ -294,7 +340,91 @@ app.use("/api/v1/*", async (c, next) => {
   await next();
 });
 
+app.get("/api/v1/api-tokens", async (c) => {
+  const userOnly = requireUser(c);
+
+  if (userOnly) {
+    return userOnly;
+  }
+
+  const rows = await c.env.DB.prepare(
+    `SELECT id, name, scopes_json, last_used_at, expires_at, is_revoked, created_at
+     FROM api_tokens
+     ORDER BY is_revoked ASC, created_at DESC
+     LIMIT 200`
+  ).all<ApiTokenRow>();
+
+  return c.json({
+    apiTokens: rows.results.map(mapApiToken),
+    availableScopes: ALL_TOKEN_SCOPES,
+  });
+});
+
+app.post("/api/v1/api-tokens", zValidator("json", ApiTokenCreateSchema), async (c) => {
+  const userOnly = requireUser(c);
+
+  if (userOnly) {
+    return userOnly;
+  }
+
+  const input = c.req.valid("json");
+  const scopes = normalizeTokenScopes(input.scopes);
+
+  if (!scopes) {
+    return badRequest(c, "Token scope is not supported.");
+  }
+
+  const id = createId("tok");
+  const token = `${API_TOKEN_PREFIX}_${randomToken(API_TOKEN_BYTES)}`;
+  const now = isoNow();
+  const actor = getAuditActor(c);
+
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      `INSERT INTO api_tokens (id, name, token_hash, scopes_json, expires_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).bind(id, input.name, await sha256(token), JSON.stringify(scopes), input.expiresAt ?? null, now),
+    auditStatement(c.env.DB, actor.actorType, actor.actorId, "api_token.create", "api_token", id, {
+      name: input.name,
+      scopes,
+      expiresAt: input.expiresAt ?? null,
+    }),
+  ]);
+
+  const row = await getApiTokenRow(c.env.DB, id);
+
+  if (!row) {
+    return notFound(c, "API token not found");
+  }
+
+  return c.json({ token, apiToken: mapApiToken(row) } satisfies CreatedApiToken, 201);
+});
+
+app.delete("/api/v1/api-tokens/:id", async (c) => {
+  const userOnly = requireUser(c);
+
+  if (userOnly) {
+    return userOnly;
+  }
+
+  const id = c.req.param("id");
+  const actor = getAuditActor(c);
+
+  await c.env.DB.batch([
+    c.env.DB.prepare(`UPDATE api_tokens SET is_revoked = 1 WHERE id = ?`).bind(id),
+    auditStatement(c.env.DB, actor.actorType, actor.actorId, "api_token.revoke", "api_token", id, {}),
+  ]);
+
+  return c.json({ ok: true });
+});
+
 app.get("/api/v1/notebooks", async (c) => {
+  const denied = requireScopes(c, "read:notebooks");
+
+  if (denied) {
+    return denied;
+  }
+
   const rows = await c.env.DB.prepare(
     `SELECT id, parent_id, name, slug, icon, color, sort_order, created_at, updated_at
      FROM notebooks
@@ -306,6 +436,12 @@ app.get("/api/v1/notebooks", async (c) => {
 });
 
 app.post("/api/v1/notebooks", zValidator("json", NotebookCreateSchema), async (c) => {
+  const denied = requireScopes(c, "write:notebooks");
+
+  if (denied) {
+    return denied;
+  }
+
   const input = c.req.valid("json");
   const actor = getAuditActor(c);
   const id = createId("nb");
@@ -325,6 +461,12 @@ app.post("/api/v1/notebooks", zValidator("json", NotebookCreateSchema), async (c
 });
 
 app.patch("/api/v1/notebooks/:id", zValidator("json", NotebookUpdateSchema), async (c) => {
+  const denied = requireScopes(c, "write:notebooks");
+
+  if (denied) {
+    return denied;
+  }
+
   const id = c.req.param("id");
   const input = c.req.valid("json");
   const actor = getAuditActor(c);
@@ -352,9 +494,37 @@ app.patch("/api/v1/notebooks/:id", zValidator("json", NotebookUpdateSchema), asy
 });
 
 app.delete("/api/v1/notebooks/:id", async (c) => {
+  const denied = requireScopes(c, "write:notebooks");
+
+  if (denied) {
+    return denied;
+  }
+
   const id = c.req.param("id");
   const actor = getAuditActor(c);
   const now = isoNow();
+  const current = await getNotebook(c.env.DB, id);
+
+  if (!current) {
+    return notFound(c, "Notebook not found");
+  }
+
+  if (id === "nb_inbox") {
+    return badRequest(c, "Inbox cannot be deleted.");
+  }
+
+  const [childCount, memoCount] = await Promise.all([
+    c.env.DB.prepare(`SELECT COUNT(*) AS count FROM notebooks WHERE parent_id = ? AND is_deleted = 0`)
+      .bind(id)
+      .first<{ count: number }>(),
+    c.env.DB.prepare(`SELECT COUNT(*) AS count FROM memos WHERE notebook_id = ? AND is_deleted = 0`)
+      .bind(id)
+      .first<{ count: number }>(),
+  ]);
+
+  if ((childCount?.count ?? 0) > 0 || (memoCount?.count ?? 0) > 0) {
+    return conflict(c, "notebook_not_empty", "Move or delete child notebooks and memos before deleting this notebook.");
+  }
 
   await c.env.DB.prepare(
     `UPDATE notebooks
@@ -368,7 +538,54 @@ app.delete("/api/v1/notebooks/:id", async (c) => {
   return c.json({ ok: true });
 });
 
+app.get("/api/v1/tags", async (c) => {
+  const denied = requireScopes(c, "read:tags");
+
+  if (denied) {
+    return denied;
+  }
+
+  return c.json({ tags: await listTagSummaries(c.env.DB) });
+});
+
+app.patch("/api/v1/tags/:tag", zValidator("json", TagRenameSchema), async (c) => {
+  const denied = requireScopes(c, "write:tags");
+
+  if (denied) {
+    return denied;
+  }
+
+  const oldTag = decodeTagParam(c.req.param("tag"));
+  const input = c.req.valid("json");
+  const actor = getAuditActor(c);
+  const actorLabel = getActorLabel(c);
+  const updated = await updateTagAcrossMemos(c.env.DB, oldTag, input.name, actor, actorLabel);
+
+  return c.json({ ok: true, updated });
+});
+
+app.delete("/api/v1/tags/:tag", async (c) => {
+  const denied = requireScopes(c, "write:tags");
+
+  if (denied) {
+    return denied;
+  }
+
+  const tag = decodeTagParam(c.req.param("tag"));
+  const actor = getAuditActor(c);
+  const actorLabel = getActorLabel(c);
+  const updated = await updateTagAcrossMemos(c.env.DB, tag, null, actor, actorLabel);
+
+  return c.json({ ok: true, updated });
+});
+
 app.get("/api/v1/memos", async (c) => {
+  const denied = requireScopes(c, "read:memos");
+
+  if (denied) {
+    return denied;
+  }
+
   const notebookId = c.req.query("notebookId");
   const q = c.req.query("q")?.trim();
   const includeTrash = c.req.query("trash") === "1";
@@ -434,6 +651,12 @@ app.get("/api/v1/memos", async (c) => {
 });
 
 app.post("/api/v1/memos", zValidator("json", MemoCreateSchema), async (c) => {
+  const denied = requireScopes(c, "write:memos");
+
+  if (denied) {
+    return denied;
+  }
+
   const input = c.req.valid("json");
   const actor = getAuditActor(c);
   const actorLabel = getActorLabel(c);
@@ -471,6 +694,12 @@ app.post("/api/v1/memos", zValidator("json", MemoCreateSchema), async (c) => {
 });
 
 app.get("/api/v1/memos/:id", async (c) => {
+  const denied = requireScopes(c, "read:memos");
+
+  if (denied) {
+    return denied;
+  }
+
   const includeDeleted = c.req.query("includeDeleted") === "1";
   const memo = await getMemoDetail(c.env.DB, c.req.param("id"), includeDeleted);
 
@@ -482,6 +711,12 @@ app.get("/api/v1/memos/:id", async (c) => {
 });
 
 app.get("/api/v1/memos/:id/revisions", async (c) => {
+  const denied = requireScopes(c, "read:memos");
+
+  if (denied) {
+    return denied;
+  }
+
   const memoId = c.req.param("id");
   const memo = await getMemoDetail(c.env.DB, memoId);
 
@@ -505,6 +740,12 @@ app.get("/api/v1/memos/:id/revisions", async (c) => {
 });
 
 app.post("/api/v1/memos/:id/revisions/:revisionId/restore", async (c) => {
+  const denied = requireScopes(c, "write:memos");
+
+  if (denied) {
+    return denied;
+  }
+
   const memoId = c.req.param("id");
   const revisionId = c.req.param("revisionId");
   const actor = getAuditActor(c);
@@ -560,6 +801,12 @@ app.post("/api/v1/memos/:id/revisions/:revisionId/restore", async (c) => {
 });
 
 app.get("/api/v1/resources", async (c) => {
+  const denied = requireScopes(c, "read:resources");
+
+  if (denied) {
+    return denied;
+  }
+
   const limit = clampNumber(Number(c.req.query("limit") ?? 500), 1, 500);
   const [rows, stats] = await Promise.all([
     c.env.DB.prepare(
@@ -592,6 +839,12 @@ app.get("/api/v1/resources", async (c) => {
 });
 
 app.post("/api/v1/memos/:id/resources", async (c) => {
+  const denied = requireScopes(c, "write:resources");
+
+  if (denied) {
+    return denied;
+  }
+
   const memoId = c.req.param("id");
   const memo = await getMemoDetail(c.env.DB, memoId);
 
@@ -694,6 +947,12 @@ app.post("/api/v1/memos/:id/resources", async (c) => {
 });
 
 app.get("/api/v1/resources/:id/blob", async (c) => {
+  const denied = requireScopes(c, "read:resources");
+
+  if (denied) {
+    return denied;
+  }
+
   const resource = await getResourceRow(c.env.DB, c.req.param("id"));
 
   if (!resource) {
@@ -718,6 +977,12 @@ app.get("/api/v1/resources/:id/blob", async (c) => {
 });
 
 app.patch("/api/v1/memos/:id", zValidator("json", MemoUpdateSchema), async (c) => {
+  const denied = requireScopes(c, "write:memos");
+
+  if (denied) {
+    return denied;
+  }
+
   const id = c.req.param("id");
   const input = c.req.valid("json");
   const actor = getAuditActor(c);
@@ -791,6 +1056,12 @@ app.patch("/api/v1/memos/:id", zValidator("json", MemoUpdateSchema), async (c) =
 });
 
 app.delete("/api/v1/memos/:id", async (c) => {
+  const denied = requireScopes(c, "write:memos");
+
+  if (denied) {
+    return denied;
+  }
+
   const id = c.req.param("id");
   const actor = getAuditActor(c);
   const permanent = c.req.query("permanent") === "1";
@@ -835,6 +1106,12 @@ app.delete("/api/v1/memos/:id", async (c) => {
 });
 
 app.post("/api/v1/memos/:id/restore", async (c) => {
+  const denied = requireScopes(c, "write:memos");
+
+  if (denied) {
+    return denied;
+  }
+
   const id = c.req.param("id");
   const actor = getAuditActor(c);
   const current = await getMemoDetailRow(c.env.DB, id, true);
@@ -864,6 +1141,12 @@ app.post("/api/v1/memos/:id/restore", async (c) => {
 });
 
 app.post("/api/v1/memos/merge", zValidator("json", MergeMemosSchema), async (c) => {
+  const denied = requireScopes(c, "write:memos");
+
+  if (denied) {
+    return denied;
+  }
+
   const input = c.req.valid("json");
   const actor = getAuditActor(c);
   const actorLabel = getActorLabel(c);
@@ -956,14 +1239,89 @@ app.post("/api/v1/memos/merge", zValidator("json", MergeMemosSchema), async (c) 
   return c.json({ memo: await getMemoDetail(c.env.DB, newMemoId) }, 201);
 });
 
-app.all("/mcp", (c) =>
+app.get("/mcp", (c) =>
   c.json({
     name: "EdgeEver MCP endpoint",
-    status: "planned",
-    message: "Remote MCP will be wired to the same memo and notebook services as the REST API.",
+    status: "ready",
+    transport: "streamable-http-jsonrpc",
+    auth: "Authorization: Bearer <api-token>",
     restBasePath: "/api/v1",
   })
 );
+
+app.post("/mcp", async (c) => {
+  let request: JsonRpcRequest;
+
+  try {
+    request = (await c.req.json()) as JsonRpcRequest;
+  } catch {
+    return c.json(jsonRpcError(null, -32700, "Parse error"), 400);
+  }
+
+  if (!request || request.jsonrpc !== "2.0" || typeof request.method !== "string") {
+    return c.json(jsonRpcError(getJsonRpcId(request), -32600, "Invalid Request"), 400);
+  }
+
+  if (request.method === "notifications/initialized" && request.id === undefined) {
+    return new Response(null, { status: 204 });
+  }
+
+  if (request.method === "initialize") {
+    return c.json(
+      jsonRpcResult(request.id ?? null, {
+        protocolVersion: "2024-11-05",
+        capabilities: {
+          tools: {},
+        },
+        serverInfo: {
+          name: "edgeever",
+          version: "0.1.0",
+        },
+      })
+    );
+  }
+
+  const auth = await authenticateRequest(c, true);
+
+  if (!auth) {
+    return c.json(jsonRpcError(request.id ?? null, -32001, "Authentication required"), 401);
+  }
+
+  c.set("auth", auth);
+
+  if (request.method === "tools/list") {
+    return c.json(
+      jsonRpcResult(request.id ?? null, {
+        tools: MCP_TOOLS,
+      })
+    );
+  }
+
+  if (request.method === "tools/call") {
+    const params = asRecord(request.params);
+    const name = typeof params.name === "string" ? params.name : "";
+    const args = asRecord(params.arguments);
+
+    try {
+      const result = await callMcpTool(c, auth, name, args);
+      return c.json(
+        jsonRpcResult(request.id ?? null, {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        })
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Tool call failed";
+      return c.json(jsonRpcError(request.id ?? null, -32000, message), 400);
+    }
+  }
+
+  return c.json(jsonRpcError(request.id ?? null, -32601, "Method not found"), 404);
+});
 
 app.notFound((c) =>
   c.json(
@@ -978,6 +1336,213 @@ app.notFound((c) =>
 );
 
 export default app;
+
+type JsonRpcRequest = {
+  jsonrpc?: string;
+  id?: string | number | null;
+  method?: string;
+  params?: unknown;
+};
+
+type JsonRpcId = string | number | null;
+
+const MCP_TOOLS = [
+  {
+    name: "search_memos",
+    description: "Search active EdgeEver memos by text, tag, or notebook.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string" },
+        notebookId: { type: "string" },
+        limit: { type: "number", minimum: 1, maximum: 50 },
+      },
+    },
+  },
+  {
+    name: "get_memo",
+    description: "Read a memo with Markdown content.",
+    inputSchema: {
+      type: "object",
+      required: ["memoId"],
+      properties: {
+        memoId: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "create_memo",
+    description: "Create a memo in a notebook.",
+    inputSchema: {
+      type: "object",
+      required: ["notebookId"],
+      properties: {
+        notebookId: { type: "string" },
+        title: { type: "string" },
+        contentMarkdown: { type: "string" },
+        tags: { type: "array", items: { type: "string" } },
+      },
+    },
+  },
+  {
+    name: "update_memo",
+    description: "Update memo title, Markdown, tags, or notebook.",
+    inputSchema: {
+      type: "object",
+      required: ["memoId"],
+      properties: {
+        memoId: { type: "string" },
+        title: { type: "string" },
+        contentMarkdown: { type: "string" },
+        tags: { type: "array", items: { type: "string" } },
+        notebookId: { type: "string" },
+        expectedRevision: { type: "number" },
+      },
+    },
+  },
+  {
+    name: "list_notebooks",
+    description: "List active notebooks.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "list_tags",
+    description: "List tags and memo counts.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
+];
+
+const callMcpTool = async (
+  c: AppContext,
+  auth: AuthContext,
+  name: string,
+  args: Record<string, unknown>
+) => {
+  switch (name) {
+    case "search_memos": {
+      assertScope(auth, "read:memos");
+      return {
+        memos: await searchMemoSummaries(c.env.DB, {
+          query: getOptionalString(args.query),
+          notebookId: getOptionalString(args.notebookId),
+          limit: clampNumber(Number(args.limit ?? 20), 1, 50),
+        }),
+      };
+    }
+    case "get_memo": {
+      assertScope(auth, "read:memos");
+      const memoId = getRequiredString(args.memoId, "memoId");
+      const memo = await getMemoDetail(c.env.DB, memoId);
+
+      if (!memo) {
+        throw new Error("Memo not found");
+      }
+
+      return { memo };
+    }
+    case "create_memo": {
+      assertScope(auth, "write:memos");
+      const notebookId = getRequiredString(args.notebookId, "notebookId");
+      const actor = getAuditActor(c);
+      const actorLabel = getActorLabel(c);
+      const memo = await createMemoRecord(c.env.DB, {
+        notebookId,
+        title: getOptionalString(args.title) ?? undefined,
+        contentMarkdown: getOptionalString(args.contentMarkdown) ?? "",
+        tags: getOptionalStringArray(args.tags),
+      }, actor, actorLabel);
+
+      return { memo };
+    }
+    case "update_memo": {
+      assertScope(auth, "write:memos");
+      const memoId = getRequiredString(args.memoId, "memoId");
+      const actor = getAuditActor(c);
+      const actorLabel = getActorLabel(c);
+      const result = await updateMemoRecord(
+        c.env.DB,
+        memoId,
+        {
+          expectedRevision:
+            typeof args.expectedRevision === "number" && Number.isInteger(args.expectedRevision)
+              ? args.expectedRevision
+              : undefined,
+          notebookId: getOptionalString(args.notebookId) ?? undefined,
+          title: getOptionalString(args.title) ?? undefined,
+          contentMarkdown: getOptionalString(args.contentMarkdown) ?? undefined,
+          tags: Array.isArray(args.tags) ? getOptionalStringArray(args.tags) : undefined,
+        },
+        actor,
+        actorLabel
+      );
+
+      if ("error" in result) {
+        throw new Error(result.message);
+      }
+
+      return { memo: result.memo };
+    }
+    case "list_notebooks": {
+      assertScope(auth, "read:notebooks");
+      return { notebooks: await listNotebooks(c.env.DB) };
+    }
+    case "list_tags": {
+      assertScope(auth, "read:tags");
+      return { tags: await listTagSummaries(c.env.DB) };
+    }
+    default:
+      throw new Error(`Unknown tool: ${name}`);
+  }
+};
+
+const jsonRpcResult = (id: JsonRpcId, result: unknown) => ({
+  jsonrpc: "2.0",
+  id,
+  result,
+});
+
+const jsonRpcError = (id: JsonRpcId, code: number, message: string, data?: unknown) => ({
+  jsonrpc: "2.0",
+  id,
+  error: {
+    code,
+    message,
+    ...(data === undefined ? {} : { data }),
+  },
+});
+
+const getJsonRpcId = (request: unknown): JsonRpcId => {
+  if (!request || typeof request !== "object" || !("id" in request)) {
+    return null;
+  }
+
+  const id = (request as { id?: unknown }).id;
+  return typeof id === "string" || typeof id === "number" || id === null ? id : null;
+};
+
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+
+const getOptionalString = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : null);
+
+const getRequiredString = (value: unknown, name: string) => {
+  const parsed = getOptionalString(value);
+
+  if (!parsed) {
+    throw new Error(`${name} is required`);
+  }
+
+  return parsed;
+};
+
+const getOptionalStringArray = (value: unknown) =>
+  Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 
 const isAuthRequired = async (env: Bindings) => {
   if (env.EDGE_EVER_AUTH_PASSWORD_HASH?.trim()) {
@@ -1096,7 +1661,7 @@ const authenticateBearerToken = async (c: AppContext, touch: boolean): Promise<A
   }
 
   const row = await c.env.DB.prepare(
-    `SELECT id, name, scopes_json, expires_at
+    `SELECT id, name, scopes_json, last_used_at, expires_at, is_revoked, created_at
      FROM api_tokens
      WHERE token_hash = ?
        AND is_revoked = 0
@@ -1119,6 +1684,7 @@ const authenticateBearerToken = async (c: AppContext, touch: boolean): Promise<A
     actorId: row.id,
     username: row.name,
     displayName: row.name,
+    scopes: parseJsonArray(row.scopes_json),
     tokenId: row.id,
   };
 };
@@ -1156,6 +1722,7 @@ const authenticateSession = async (c: AppContext, touch: boolean): Promise<AuthC
     actorId: row.user_id,
     username: row.username,
     displayName: row.display_name,
+    scopes: [],
     sessionId: row.id,
   };
 };
@@ -1184,6 +1751,57 @@ const getActorLabel = (c: AppContext) => {
   const auth = c.get("auth");
   return auth?.actorId ? `${auth.actorType}:${auth.actorId}` : auth?.username ?? "user";
 };
+
+const requireUser = (c: AppContext) => {
+  const auth = c.get("auth");
+
+  if (auth?.kind === "user") {
+    return null;
+  }
+
+  return forbidden(c, "Only an interactive user session can manage this resource.");
+};
+
+const requireScopes = (c: AppContext, ...scopes: TokenScope[]) => {
+  const auth = c.get("auth");
+
+  if (!auth) {
+    return unauthorized(c, "Authentication required.");
+  }
+
+  if (hasScopes(auth, scopes)) {
+    return null;
+  }
+
+  return forbidden(c, `Missing required scope: ${scopes.join(", ")}`);
+};
+
+const assertScope = (auth: AuthContext, scope: TokenScope) => {
+  if (!hasScopes(auth, [scope])) {
+    throw new Error(`Missing required scope: ${scope}`);
+  }
+};
+
+const hasScopes = (auth: AuthContext, scopes: TokenScope[]) => {
+  if (auth.kind === "user") {
+    return true;
+  }
+
+  return scopes.every((scope) => auth.scopes.includes(scope));
+};
+
+const normalizeTokenScopes = (scopes: string[]) => {
+  const normalized = Array.from(new Set(scopes.map((scope) => scope.trim()).filter(Boolean)));
+
+  if (normalized.some((scope) => !isTokenScope(scope))) {
+    return null;
+  }
+
+  return normalized as TokenScope[];
+};
+
+const isTokenScope = (scope: string): scope is TokenScope =>
+  (ALL_TOKEN_SCOPES as readonly string[]).includes(scope);
 
 const getSessionMaxAge = (env: Bindings) => {
   const days = clampNumber(Number(env.EDGE_EVER_SESSION_TTL_DAYS ?? DEFAULT_SESSION_TTL_DAYS), 1, 90);
@@ -1365,6 +1983,212 @@ const mapResourceStorageSummary = (row: ResourceStatsRow | null): ResourceStorag
   attachmentCount: row?.attachment_count ?? 0,
 });
 
+const mapApiToken = (row: ApiTokenRow): ApiToken => ({
+  id: row.id,
+  name: row.name,
+  scopes: parseJsonArray(row.scopes_json),
+  lastUsedAt: row.last_used_at,
+  expiresAt: row.expires_at,
+  isRevoked: Boolean(row.is_revoked),
+  createdAt: row.created_at,
+});
+
+const mapTagSummary = (row: TagSummaryRow): TagSummary => ({
+  name: row.name,
+  memoCount: row.memo_count,
+  updatedAt: row.updated_at,
+});
+
+const getApiTokenRow = async (db: D1Database, id: string): Promise<ApiTokenRow | null> =>
+  db
+    .prepare(
+      `SELECT id, name, scopes_json, last_used_at, expires_at, is_revoked, created_at
+       FROM api_tokens
+       WHERE id = ?`
+    )
+    .bind(id)
+    .first<ApiTokenRow>();
+
+const listNotebooks = async (db: D1Database): Promise<Notebook[]> => {
+  const rows = await db
+    .prepare(
+      `SELECT id, parent_id, name, slug, icon, color, sort_order, created_at, updated_at
+       FROM notebooks
+       WHERE is_deleted = 0
+       ORDER BY parent_id IS NOT NULL, sort_order ASC, name ASC`
+    )
+    .all<NotebookRow>();
+
+  return rows.results.map(mapNotebook);
+};
+
+const listTagSummaries = async (db: D1Database): Promise<TagSummary[]> => {
+  const rows = await db
+    .prepare(
+      `SELECT json_each.value AS name,
+              COUNT(DISTINCT m.id) AS memo_count,
+              MAX(m.updated_at) AS updated_at
+       FROM memos m, json_each(m.tags_json)
+       WHERE m.is_deleted = 0
+         AND trim(json_each.value) <> ''
+       GROUP BY json_each.value
+       ORDER BY lower(json_each.value) ASC`
+    )
+    .all<TagSummaryRow>();
+
+  return rows.results
+    .filter((row) => typeof row.name === "string" && row.name.trim())
+    .map(mapTagSummary);
+};
+
+const updateTagAcrossMemos = async (
+  db: D1Database,
+  oldTag: string,
+  nextTag: string | null,
+  actor: { actorType: "user" | "agent"; actorId: string | null },
+  actorLabel: string
+) => {
+  const normalizedOld = normalizeTags([oldTag])[0];
+  const normalizedNext = nextTag === null ? null : normalizeTags([nextTag])[0];
+
+  if (!normalizedOld || normalizedOld === normalizedNext) {
+    return 0;
+  }
+
+  const rows = await db
+    .prepare(
+      `SELECT m.id, m.title, m.tags_json, c.content_text
+       FROM memos m
+       INNER JOIN memo_contents c ON c.memo_id = m.id
+       WHERE m.is_deleted = 0
+         AND EXISTS (
+           SELECT 1
+           FROM json_each(m.tags_json)
+           WHERE json_each.value = ?
+         )`
+    )
+    .bind(normalizedOld)
+    .all<MemoTagUpdateRow>();
+
+  const now = isoNow();
+  const statements: D1PreparedStatement[] = [];
+  let updated = 0;
+
+  for (const row of rows.results) {
+    const currentTags = parseJsonArray(row.tags_json);
+
+    if (!currentTags.includes(normalizedOld)) {
+      continue;
+    }
+
+    const nextTags = normalizeTags(
+      currentTags.flatMap((tag) => {
+        if (tag !== normalizedOld) {
+          return [tag];
+        }
+
+        return normalizedNext ? [normalizedNext] : [];
+      })
+    );
+
+    statements.push(
+      db
+        .prepare(
+          `UPDATE memos
+           SET tags_json = ?, updated_by = ?, updated_at = ?
+           WHERE id = ? AND is_deleted = 0`
+        )
+        .bind(JSON.stringify(nextTags), actorLabel, now, row.id),
+      db.prepare(`DELETE FROM memos_fts WHERE memo_id = ?`).bind(row.id),
+      db
+        .prepare(
+          `INSERT INTO memos_fts (memo_id, title, content_text, tags)
+           VALUES (?, ?, ?, ?)`
+        )
+        .bind(row.id, row.title, row.content_text, nextTags.join(" ")),
+      auditStatement(db, actor.actorType, actor.actorId, normalizedNext ? "tag.rename" : "tag.delete", "memo", row.id, {
+        from: normalizedOld,
+        to: normalizedNext,
+      })
+    );
+    updated += 1;
+  }
+
+  if (statements.length > 0) {
+    await db.batch(statements);
+  }
+
+  return updated;
+};
+
+const searchMemoSummaries = async (
+  db: D1Database,
+  options: { query?: string | null; notebookId?: string | null; limit: number }
+): Promise<MemoSummary[]> => {
+  const q = options.query?.trim();
+  const notebookId = options.notebookId?.trim() || null;
+  const limit = clampNumber(options.limit, 1, 100);
+
+  if (q) {
+    const ftsQuery = toFtsQuery(q);
+    const likeQuery = `%${escapeLike(q)}%`;
+
+    if (ftsQuery) {
+      const rows = await db
+        .prepare(
+          `WITH raw_matches(memo_id, rank) AS (
+             SELECT memo_id, bm25(memos_fts)
+             FROM memos_fts
+             WHERE memos_fts MATCH ?
+
+             UNION ALL
+
+             SELECT m.id, 100.0
+             FROM memos m
+             INNER JOIN memo_contents c ON c.memo_id = m.id
+             WHERE m.title LIKE ? ESCAPE '\\'
+                OR c.content_text LIKE ? ESCAPE '\\'
+                OR m.tags_json LIKE ? ESCAPE '\\'
+           ),
+           search_matches AS (
+             SELECT memo_id, MIN(rank) AS rank
+             FROM raw_matches
+             GROUP BY memo_id
+           )
+           SELECT m.id, m.notebook_id, m.title, m.excerpt, m.tags_json, m.is_pinned,
+                  m.is_archived, m.is_deleted, m.created_at, m.updated_at, m.deleted_at, c.revision
+           FROM search_matches s
+           INNER JOIN memos m ON m.id = s.memo_id
+           INNER JOIN memo_contents c ON c.memo_id = m.id
+           WHERE m.is_deleted = 0
+             AND (? IS NULL OR m.notebook_id = ?)
+           ORDER BY s.rank ASC, m.is_pinned DESC, m.updated_at DESC
+           LIMIT ?`
+        )
+        .bind(ftsQuery, likeQuery, likeQuery, likeQuery, notebookId, notebookId, limit)
+        .all<MemoSummaryRow>();
+
+      return rows.results.map(mapMemoSummary);
+    }
+  }
+
+  const rows = await db
+    .prepare(
+      `SELECT m.id, m.notebook_id, m.title, m.excerpt, m.tags_json, m.is_pinned,
+              m.is_archived, m.is_deleted, m.created_at, m.updated_at, m.deleted_at, c.revision
+       FROM memos m
+       INNER JOIN memo_contents c ON c.memo_id = m.id
+       WHERE m.is_deleted = 0
+         AND (? IS NULL OR m.notebook_id = ?)
+       ORDER BY m.is_pinned DESC, m.updated_at DESC
+       LIMIT ?`
+    )
+    .bind(notebookId, notebookId, limit)
+    .all<MemoSummaryRow>();
+
+  return rows.results.map(mapMemoSummary);
+};
+
 const getNotebook = async (db: D1Database, id: string): Promise<Notebook | null> => {
   const row = await db
     .prepare(
@@ -1399,6 +2223,134 @@ const getMemoDetailRow = async (
 const getMemoDetail = async (db: D1Database, id: string, includeDeleted = false): Promise<MemoDetail | null> => {
   const row = await getMemoDetailRow(db, id, includeDeleted);
   return row ? mapMemoDetail(row) : null;
+};
+
+const createMemoRecord = async (
+  db: D1Database,
+  input: { notebookId: string; title?: string; contentMarkdown?: string; tags?: string[] },
+  actor: { actorType: "user" | "agent"; actorId: string | null },
+  actorLabel: string
+): Promise<MemoDetail> => {
+  const tags = normalizeTags(input.tags);
+  const contentMarkdown = input.contentMarkdown ?? "";
+  const contentJson = markdownToDoc(contentMarkdown);
+  const contentText = docToText(contentJson);
+  const title = input.title || deriveTitle(contentText);
+  const excerpt = createExcerpt(contentText || title || "");
+  const contentHash = await sha256(contentMarkdown + JSON.stringify(contentJson));
+  const id = createId("memo");
+  const now = isoNow();
+
+  await db.batch([
+    db
+      .prepare(
+        `INSERT INTO memos (
+          id, notebook_id, title, excerpt, tags_json, created_by, updated_by, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .bind(id, input.notebookId, title, excerpt, JSON.stringify(tags), actorLabel, actorLabel, now, now),
+    db
+      .prepare(
+        `INSERT INTO memo_contents (
+          memo_id, content_json, content_markdown, content_text, content_hash, revision, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 0, ?, ?)`
+      )
+      .bind(id, JSON.stringify(contentJson), contentMarkdown, contentText, contentHash, now, now),
+    db
+      .prepare(
+        `INSERT INTO memos_fts (memo_id, title, content_text, tags)
+         VALUES (?, ?, ?, ?)`
+      )
+      .bind(id, title, contentText, tags.join(" ")),
+    auditStatement(db, actor.actorType, actor.actorId, "memo.create", "memo", id, {
+      notebookId: input.notebookId,
+    }),
+  ]);
+
+  const memo = await getMemoDetail(db, id);
+
+  if (!memo) {
+    throw new Error("Memo was created but could not be read.");
+  }
+
+  return memo;
+};
+
+const updateMemoRecord = async (
+  db: D1Database,
+  id: string,
+  input: {
+    expectedRevision?: number;
+    notebookId?: string;
+    title?: string;
+    contentMarkdown?: string;
+    tags?: string[];
+  },
+  actor: { actorType: "user" | "agent"; actorId: string | null },
+  actorLabel: string
+): Promise<{ memo: MemoDetail; error?: never; message?: never } | { error: string; message: string }> => {
+  const current = await getMemoDetailRow(db, id);
+
+  if (!current) {
+    return { error: "not_found", message: "Memo not found" };
+  }
+
+  if (input.expectedRevision !== undefined && input.expectedRevision !== current.revision) {
+    return { error: "revision_conflict", message: "Memo was updated elsewhere. Reload before saving." };
+  }
+
+  const currentContentJson = parseDoc(current.content_json);
+  const contentJson = input.contentMarkdown !== undefined ? markdownToDoc(input.contentMarkdown) : currentContentJson;
+  const contentMarkdown =
+    input.contentMarkdown !== undefined ? input.contentMarkdown : docToMarkdown(contentJson);
+  const contentText = docToText(contentJson);
+  const title = input.title ?? current.title ?? deriveTitle(contentText);
+  const tags = input.tags === undefined ? parseJsonArray(current.tags_json) : normalizeTags(input.tags);
+  const excerpt = createExcerpt(contentText || title || "");
+  const notebookId = input.notebookId ?? current.notebook_id;
+  const nextRevision = current.revision + 1;
+  const contentHash = await sha256(contentMarkdown + JSON.stringify(contentJson));
+  const now = isoNow();
+  const revisionStatements = (await shouldSnapshotMemoRevision(db, current, title, JSON.stringify(tags), contentHash, now))
+    ? [createMemoRevisionStatement(db, current, actorLabel, now)]
+    : [];
+
+  await db.batch([
+    ...revisionStatements,
+    db
+      .prepare(
+        `UPDATE memos
+         SET notebook_id = ?, title = ?, excerpt = ?, tags_json = ?, updated_by = ?, updated_at = ?
+         WHERE id = ? AND is_deleted = 0`
+      )
+      .bind(notebookId, title, excerpt, JSON.stringify(tags), actorLabel, now, id),
+    db
+      .prepare(
+        `UPDATE memo_contents
+         SET content_json = ?, content_markdown = ?, content_text = ?, content_hash = ?,
+             revision = ?, updated_at = ?
+         WHERE memo_id = ?`
+      )
+      .bind(JSON.stringify(contentJson), contentMarkdown, contentText, contentHash, nextRevision, now, id),
+    db.prepare(`DELETE FROM memos_fts WHERE memo_id = ?`).bind(id),
+    db
+      .prepare(
+        `INSERT INTO memos_fts (memo_id, title, content_text, tags)
+         VALUES (?, ?, ?, ?)`
+      )
+      .bind(id, title, contentText, tags.join(" ")),
+    auditStatement(db, actor.actorType, actor.actorId, "memo.update", "memo", id, {
+      revision: nextRevision,
+    }),
+  ]);
+
+  const memo = await getMemoDetail(db, id);
+
+  if (!memo) {
+    return { error: "not_found", message: "Memo not found after update" };
+  }
+
+  return { memo };
 };
 
 const getMemoRevisionRow = async (
@@ -1647,6 +2599,14 @@ const contentDispositionInline = (filename: string | null) => {
   return `inline; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
 };
 
+const decodeTagParam = (value: string) => {
+  try {
+    return decodeURIComponent(value).trim();
+  } catch {
+    return value.trim();
+  }
+};
+
 const notFound = (c: Context, message: string) =>
   c.json(
     {
@@ -1669,6 +2629,17 @@ const badRequest = (c: Context, message: string) =>
     400
   );
 
+const conflict = (c: Context, code: string, message: string) =>
+  c.json(
+    {
+      error: {
+        code,
+        message,
+      },
+    },
+    409
+  );
+
 const unauthorized = (c: Context, message: string) =>
   c.json(
     {
@@ -1678,4 +2649,15 @@ const unauthorized = (c: Context, message: string) =>
       },
     },
     401
+  );
+
+const forbidden = (c: Context, message: string) =>
+  c.json(
+    {
+      error: {
+        code: "forbidden",
+        message,
+      },
+    },
+    403
   );

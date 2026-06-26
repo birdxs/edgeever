@@ -1,5 +1,7 @@
 import type {
   AuthSession,
+  ApiToken,
+  CreatedApiToken,
   MemoDetail,
   MemoRevision,
   MemoSummary,
@@ -7,6 +9,7 @@ import type {
   Resource,
   ResourceListItem,
   ResourceStorageSummary,
+  TagSummary,
   TiptapDoc,
 } from "@edgeever/shared";
 
@@ -25,6 +28,15 @@ type ListMemoRevisionsResponse = {
 type ListResourcesResponse = {
   resources: ResourceListItem[];
   summary: ResourceStorageSummary;
+};
+
+type ListTagsResponse = {
+  tags: TagSummary[];
+};
+
+type ListApiTokensResponse = {
+  apiTokens: ApiToken[];
+  availableScopes: string[];
 };
 
 type MemoResponse = {
@@ -103,6 +115,43 @@ export const api = {
     request<NotebookResponse>("/api/v1/notebooks", {
       method: "POST",
       body: JSON.stringify(payload),
+    }),
+
+  updateNotebook: (notebookId: string, payload: { name?: string; parentId?: string | null; sortOrder?: number }) =>
+    request<NotebookResponse>(`/api/v1/notebooks/${notebookId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+
+  deleteNotebook: (notebookId: string) =>
+    request<{ ok: true }>(`/api/v1/notebooks/${notebookId}`, {
+      method: "DELETE",
+    }),
+
+  listTags: () => request<ListTagsResponse>("/api/v1/tags"),
+
+  renameTag: (tag: string, name: string) =>
+    request<{ ok: true; updated: number }>(`/api/v1/tags/${encodeURIComponent(tag)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    }),
+
+  deleteTag: (tag: string) =>
+    request<{ ok: true; updated: number }>(`/api/v1/tags/${encodeURIComponent(tag)}`, {
+      method: "DELETE",
+    }),
+
+  listApiTokens: () => request<ListApiTokensResponse>("/api/v1/api-tokens"),
+
+  createApiToken: (payload: { name: string; scopes: string[]; expiresAt?: string | null }) =>
+    request<CreatedApiToken>("/api/v1/api-tokens", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  revokeApiToken: (tokenId: string) =>
+    request<{ ok: true }>(`/api/v1/api-tokens/${tokenId}`, {
+      method: "DELETE",
     }),
 
   listMemos: (params: { notebookId?: string | null; q?: string; trash?: boolean }) => {
