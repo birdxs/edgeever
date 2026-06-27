@@ -1448,8 +1448,9 @@ export const WorkspaceApp = ({
           <section
             className={cn(
               "relative min-w-0 overflow-hidden border-r border-slate-200 bg-[#f8faf8]",
-              rightView === "editor" ? "lg:block lg:bg-white/75 lg:backdrop-blur-lg" : "lg:hidden",
-              activePane === "memos" ? "block" : "hidden"
+              rightView === "editor"
+                ? (activePane === "memos" ? "block lg:block lg:bg-white/75 lg:backdrop-blur-lg" : "hidden lg:block lg:bg-white/75 lg:backdrop-blur-lg")
+                : (activePane === "memos" ? "block lg:hidden" : "hidden lg:hidden")
             )}
           >
             <MemoListPane
