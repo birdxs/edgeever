@@ -19,6 +19,7 @@ import {
   Archive,
   ArrowDownWideNarrow,
   Bold,
+  Check,
   ChevronLeft,
   CheckSquare,
   ChevronDown,
@@ -169,6 +170,8 @@ const MEMO_TEMPLATES: MemoTemplate[] = [
 ];
 const MEMO_LONG_PRESS_DELAY_MS = 520;
 const MEMO_LONG_PRESS_MOVE_TOLERANCE_PX = 14;
+
+const getSelectionCountLabel = (count: number) => (count > 0 ? `已选择 ${count} 条` : "选择笔记");
 
 const useDismissableLayer = <T extends HTMLElement>(open: boolean, onClose: () => void) => {
   const ref = useRef<T | null>(null);
@@ -1013,7 +1016,7 @@ const WorkspaceApp = ({
       {activePane !== "editor" && !memoSelectionModeActive ? (
         <MobileBottomNav
           activeItem={mobileBottomNavActive}
-          canCreateMemo={canCreateMemo}
+          canCreateMemo={canCreateMemo && memoView !== "trash"}
           isCreating={createMemoMutation.isPending}
           onCreateMemo={handleCreateMemo}
           onHome={handleMobileHome}
@@ -1024,6 +1027,7 @@ const WorkspaceApp = ({
       ) : null}
       {mobileNotebookPickerOpen ? (
         <MobileNotebookPicker
+          currentLabel={memoView === "trash" ? "回收站" : undefined}
           notebooks={notebooks}
           selectedNotebookId={selectedNotebookId}
           onClose={() => setMobileNotebookPickerOpen(false)}
@@ -1523,9 +1527,9 @@ const MobileBottomNav = ({
       />
       <MobileBottomNavButton active={activeItem === "settings"} icon={<UserRound className="h-5 w-5" />} label="我的" onClick={onOpenSettings} />
       <button
-        className="absolute left-1/2 top-[-1.35rem] flex h-16 w-16 -translate-x-1/2 items-center justify-center rounded-full border-[6px] border-white bg-emerald-600 text-white shadow-[0_12px_26px_rgba(5,150,105,0.32)] transition hover:bg-emerald-700 disabled:opacity-50"
+        className="absolute left-1/2 top-[-1.35rem] flex h-16 w-16 -translate-x-1/2 items-center justify-center rounded-full border-[6px] border-white bg-emerald-600 text-white shadow-[0_12px_26px_rgba(5,150,105,0.32)] transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300 disabled:opacity-70 disabled:hover:bg-emerald-300"
         type="button"
-        title="新建笔记"
+        title={!canCreateMemo ? "当前视图不可新建笔记" : isCreating ? "正在创建" : "新建笔记"}
         disabled={!canCreateMemo || isCreating}
         onClick={onCreateMemo}
       >
@@ -1714,7 +1718,7 @@ const MobileQuickActionButton = ({
 }) => (
   <button
     className={cn(
-      "flex h-[76px] w-[92px] shrink-0 snap-start flex-col items-center justify-center gap-2 rounded-md border border-slate-100 bg-white text-xs font-medium text-slate-700 shadow-[0_8px_20px_rgba(15,23,42,0.05)] transition disabled:opacity-40",
+      "flex h-[76px] w-[92px] shrink-0 snap-start flex-col items-center justify-center gap-2 rounded-md border border-slate-100 bg-white text-xs font-medium text-slate-700 shadow-[0_8px_20px_rgba(15,23,42,0.05)] transition disabled:cursor-not-allowed disabled:opacity-40",
       locked ? "cursor-default" : "hover:bg-slate-50"
     )}
     type="button"
@@ -1736,12 +1740,14 @@ const MobileQuickActionButton = ({
 );
 
 const MobileNotebookPicker = ({
+  currentLabel,
   notebooks,
   selectedNotebookId,
   onClose,
   onSelectAll,
   onSelect,
 }: {
+  currentLabel?: string;
   notebooks: Notebook[];
   selectedNotebookId: string | null;
   onClose: () => void;
@@ -1751,8 +1757,9 @@ const MobileNotebookPicker = ({
   const [notebookSearch, setNotebookSearch] = useState("");
   const tree = useMemo(() => buildNotebookTree(notebooks), [notebooks]);
   const filteredTree = useMemo(() => filterNotebookTree(tree, notebookSearch), [notebookSearch, tree]);
-  const allSelected = selectedNotebookId === null;
-  const selectedNotebookName = allSelected ? "全部笔记" : notebooks.find((item) => item.id === selectedNotebookId)?.name ?? "笔记本";
+  const allSelected = !currentLabel && selectedNotebookId === null;
+  const selectedNotebookName =
+    currentLabel ?? (allSelected ? "全部笔记" : notebooks.find((item) => item.id === selectedNotebookId)?.name ?? "笔记本");
   const searchQuery = notebookSearch.trim();
 
   return (
@@ -1804,13 +1811,13 @@ const MobileNotebookPicker = ({
           <button
             className={cn(
               "mb-1 flex h-12 w-full items-center gap-3 rounded-md px-3 text-left text-sm transition",
-              allSelected ? "bg-slate-100 font-semibold text-slate-950" : "text-slate-800 hover:bg-slate-50"
+              allSelected ? "bg-emerald-50 font-semibold text-emerald-950" : "text-slate-800 hover:bg-slate-50"
             )}
             type="button"
             aria-current={allSelected ? "page" : undefined}
             onClick={onSelectAll}
           >
-            <LayoutList className="h-5 w-5 shrink-0 text-slate-600" />
+            <LayoutList className={cn("h-5 w-5 shrink-0", allSelected ? "text-emerald-700" : "text-slate-600")} />
             <span className="min-w-0 flex-1 truncate text-base">全部笔记</span>
             {allSelected ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" /> : null}
           </button>
@@ -1864,7 +1871,7 @@ const MobileNotebookPickerItem = ({
       <button
         className={cn(
           "flex h-12 w-full items-center gap-3 rounded-md px-3 text-left text-sm transition",
-          selected ? "bg-slate-100 font-semibold text-slate-950" : "text-slate-800 hover:bg-slate-50"
+          selected ? "bg-emerald-50 font-semibold text-emerald-950" : "text-slate-800 hover:bg-slate-50"
         )}
         style={{ paddingLeft: `${12 + depth * 18}px` }}
         type="button"
@@ -1872,9 +1879,9 @@ const MobileNotebookPickerItem = ({
         onClick={() => onSelect(node.id)}
       >
         {node.slug === "inbox" ? (
-          <Inbox className="h-5 w-5 shrink-0 text-slate-600" />
+          <Inbox className={cn("h-5 w-5 shrink-0", selected ? "text-emerald-700" : "text-slate-600")} />
         ) : (
-          <Folder className="h-5 w-5 shrink-0 text-slate-600" />
+          <Folder className={cn("h-5 w-5 shrink-0", selected ? "text-emerald-700" : "text-slate-600")} />
         )}
         <span className="min-w-0 flex-1 truncate text-base">{node.name}</span>
         {selected ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" /> : null}
@@ -1938,6 +1945,7 @@ const memoListDensityOptions: Array<{ value: MemoListDensity; label: string; ico
 
 const MobileListActionsSheet = ({
   canSelectMemos,
+  isSelectionMode,
   listDensity,
   sortMode,
   onClose,
@@ -1950,6 +1958,7 @@ const MobileListActionsSheet = ({
   onSortModeChange,
 }: {
   canSelectMemos: boolean;
+  isSelectionMode: boolean;
   listDensity: MemoListDensity;
   sortMode: MemoSortMode;
   onClose: () => void;
@@ -1974,24 +1983,32 @@ const MobileListActionsSheet = ({
         </Button>
       </header>
       <div className="max-h-[calc(100dvh_-_10.25rem_-_env(safe-area-inset-bottom))] overflow-y-auto p-2">
-        <MobileListActionButton
-          disabled={!canSelectMemos}
-          icon={<CheckSquare className="h-4 w-4" />}
-          label="选择笔记"
-          onClick={onEnterSelectionMode}
-        />
+        {!isSelectionMode ? (
+          <>
+            <MobileListActionButton
+              disabled={!canSelectMemos}
+              icon={<CheckSquare className="h-4 w-4" />}
+              label="选择笔记"
+              onClick={onEnterSelectionMode}
+            />
 
-        <div className="my-2 h-px bg-slate-100" />
+            <div className="my-2 h-px bg-slate-100" />
+          </>
+        ) : null}
 
         <div className="px-3 py-2 text-xs font-semibold text-slate-400">显示方式</div>
         {memoListDensityOptions.map((option) => (
           <button
             key={option.value}
-            className="flex h-11 w-full items-center gap-3 rounded-md px-3 text-left text-sm font-medium text-slate-800 transition hover:bg-slate-50"
+            className={cn(
+              "flex h-11 w-full items-center gap-3 rounded-md px-3 text-left text-sm font-medium transition",
+              listDensity === option.value ? "bg-emerald-50 text-emerald-950" : "text-slate-800 hover:bg-slate-50"
+            )}
             type="button"
+            aria-pressed={listDensity === option.value}
             onClick={() => onListDensityChange(option.value)}
           >
-            <span className="text-slate-500">{option.icon}</span>
+            <span className={listDensity === option.value ? "text-emerald-700" : "text-slate-500"}>{option.icon}</span>
             <span className="min-w-0 flex-1 truncate">{option.label}</span>
             <CheckCircle2 className={cn("h-4 w-4 shrink-0", listDensity === option.value ? "text-emerald-600" : "text-transparent")} />
           </button>
@@ -2003,8 +2020,12 @@ const MobileListActionsSheet = ({
         {mobileSortOptions.map((option) => (
           <button
             key={option.value}
-            className="flex h-11 w-full items-center gap-3 rounded-md px-3 text-left text-sm font-medium text-slate-800 transition hover:bg-slate-50"
+            className={cn(
+              "flex h-11 w-full items-center gap-3 rounded-md px-3 text-left text-sm font-medium transition",
+              sortMode === option.value ? "bg-emerald-50 text-emerald-950" : "text-slate-800 hover:bg-slate-50"
+            )}
             type="button"
+            aria-pressed={sortMode === option.value}
             onClick={() => onSortModeChange(option.value)}
           >
             <span className="min-w-0 flex-1 truncate">{option.label}</span>
@@ -2046,16 +2067,20 @@ const MobileListActionButton = ({
 );
 
 const MobileSelectionActionBar = ({
+  canDelete,
   canMove,
-  isDeleting,
+  deleteTitle,
   isTrashView,
+  moveTitle,
   onDelete,
   onOpenMore,
   onOpenMove,
 }: {
+  canDelete: boolean;
   canMove: boolean;
-  isDeleting: boolean;
+  deleteTitle: string;
   isTrashView: boolean;
+  moveTitle: string;
   onDelete: () => void;
   onOpenMore: () => void;
   onOpenMove: () => void;
@@ -2066,12 +2091,14 @@ const MobileSelectionActionBar = ({
         disabled={!canMove}
         icon={<Folder className="h-5 w-5" />}
         label="移动"
+        title={moveTitle}
         onClick={onOpenMove}
       />
       <MobileSelectionActionButton
-        disabled={isDeleting}
+        disabled={!canDelete}
         icon={<Trash2 className="h-5 w-5" />}
         label={isTrashView ? "永久删除" : "删除"}
+        title={deleteTitle}
         onClick={onDelete}
       />
       <MobileSelectionActionButton icon={<MoreVertical className="h-5 w-5" />} label="更多" onClick={onOpenMore} />
@@ -2083,19 +2110,21 @@ const MobileSelectionActionButton = ({
   disabled = false,
   icon,
   label,
+  title = label,
   onClick,
 }: {
   disabled?: boolean;
   icon: ReactNode;
   label: string;
+  title?: string;
   onClick: () => void;
 }) => (
   <button
-    className="flex h-12 flex-col items-center justify-center gap-1 rounded-md text-xs font-medium text-slate-700 transition hover:bg-slate-100 disabled:opacity-40"
+    className="flex h-12 flex-col items-center justify-center gap-1 rounded-md text-xs font-medium text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-300 disabled:opacity-100 disabled:hover:bg-transparent"
     type="button"
     disabled={disabled}
-    title={label}
-    aria-label={label}
+    title={title}
+    aria-label={title}
     onClick={onClick}
   >
     {icon}
@@ -2120,6 +2149,7 @@ const MobileMoveSheet = ({
 }) => {
   const [notebookSearch, setNotebookSearch] = useState("");
   const options = useMemo(() => getNotebookMoveOptions(notebooks), [notebooks]);
+  const selectedCountLabel = getSelectionCountLabel(selectedCount);
   const moveSearchQuery = notebookSearch.trim().toLocaleLowerCase("zh-CN");
   const filteredOptions = useMemo(() => {
     if (!moveSearchQuery) {
@@ -2141,7 +2171,7 @@ const MobileMoveSheet = ({
         <header className="flex h-12 items-center justify-between border-b border-slate-200 px-4">
           <div className="min-w-0">
             <div className="truncate text-sm font-semibold text-slate-950">移动到笔记本</div>
-            <div className="truncate text-xs text-slate-500">已选择 {selectedCount} 条</div>
+            <div className="truncate text-xs text-slate-500">{selectedCountLabel}</div>
           </div>
           <Button size="icon" variant="ghost" title="关闭" onClick={onClose}>
             <X className="h-4 w-4" />
@@ -2257,8 +2287,10 @@ const MobileNotebookSelectSheet = ({
 const MobileSelectionMoreSheet = ({
   canMerge,
   canToggleVisibleSelection,
+  mergeTitle,
   selectedCount,
   selectionToggleLabel,
+  selectionToggleTitle,
   onClearSelection,
   onClose,
   onMerge,
@@ -2266,8 +2298,10 @@ const MobileSelectionMoreSheet = ({
 }: {
   canMerge: boolean;
   canToggleVisibleSelection: boolean;
+  mergeTitle: string;
   selectedCount: number;
   selectionToggleLabel: string;
+  selectionToggleTitle: string;
   onClearSelection: () => void;
   onClose: () => void;
   onMerge: () => void;
@@ -2282,25 +2316,27 @@ const MobileSelectionMoreSheet = ({
       <header className="flex h-12 items-center justify-between border-b border-slate-200 px-4">
         <div className="min-w-0">
           <div className="truncate text-sm font-semibold text-slate-950">批量操作</div>
-          <div className="truncate text-xs text-slate-500">已选择 {selectedCount} 条</div>
+          <div className="truncate text-xs text-slate-500">{getSelectionCountLabel(selectedCount)}</div>
         </div>
         <Button size="icon" variant="ghost" title="关闭" onClick={onClose}>
           <X className="h-4 w-4" />
         </Button>
       </header>
       <button
-        className="flex h-12 w-full items-center gap-3 border-b border-slate-100 px-4 text-left text-sm font-medium text-slate-800 transition hover:bg-slate-50 disabled:opacity-40"
+        className="flex h-12 w-full items-center gap-3 border-b border-slate-100 px-4 text-left text-sm font-medium text-slate-800 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-300 disabled:opacity-100 disabled:hover:bg-transparent"
         type="button"
         disabled={!canToggleVisibleSelection}
+        title={selectionToggleTitle}
         onClick={onToggleVisibleSelection}
       >
         <CheckSquare className="h-4 w-4" />
         {selectionToggleLabel}
       </button>
       <button
-        className="flex h-12 w-full items-center gap-3 border-b border-slate-100 px-4 text-left text-sm font-medium text-slate-800 transition hover:bg-slate-50 disabled:opacity-40"
+        className="flex h-12 w-full items-center gap-3 border-b border-slate-100 px-4 text-left text-sm font-medium text-slate-800 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-300 disabled:opacity-100 disabled:hover:bg-transparent"
         type="button"
         disabled={!canMerge}
+        title={mergeTitle}
         onClick={onMerge}
       >
         <Merge className="h-4 w-4" />
@@ -2309,6 +2345,8 @@ const MobileSelectionMoreSheet = ({
       <button
         className="flex h-12 w-full items-center gap-3 px-4 text-left text-sm font-medium text-slate-800 transition hover:bg-slate-50"
         type="button"
+        title="取消选择"
+        aria-label="取消选择"
         onClick={onClearSelection}
       >
         <X className="h-4 w-4" />
@@ -2569,7 +2607,6 @@ const MemoListPane = ({
   const canEnterSelectionMode = visibleMemoIds.length > 0;
   const selectedVisibleMemoCount = visibleMemoIds.filter((memoId) => selectedMemoIds.has(memoId)).length;
   const allVisibleMemosSelected = visibleMemoIds.length > 0 && selectedVisibleMemoCount === visibleMemoIds.length;
-  const canSelectAllVisibleMemos = visibleMemoIds.some((memoId) => !selectedMemoIds.has(memoId));
   const canToggleVisibleMemoSelection = visibleMemoIds.length > 0;
   const visibleSelectionToggleLabel = allVisibleMemosSelected ? "全不选当前列表" : "全选当前列表";
   const desktopFilterRef = useDismissableLayer<HTMLDivElement>(desktopFilterOpen, () => setDesktopFilterOpen(false));
@@ -2581,6 +2618,24 @@ const MemoListPane = ({
   const listCountLabel = `${filteredMemos.length}${filterMode !== "all" ? ` / ${memos.length}` : ""} ${
     view === "trash" ? "条已删除" : "条笔记"
   }`;
+  const selectionCountLabel = getSelectionCountLabel(selectedMemoIds.size);
+  const selectionMoveTitle =
+    selectedMemoIds.size === 0
+      ? "请选择笔记"
+      : view === "trash"
+        ? "回收站内不可移动"
+        : notebooks.length === 0
+          ? "没有可移动的笔记本"
+          : isMoving
+            ? "正在移动"
+            : "移动";
+  const selectionDeleteTitle =
+    selectedMemoIds.size === 0 ? "请选择笔记" : isDeleting ? "正在删除" : view === "trash" ? "永久删除" : "删除";
+  const selectionMergeTitle =
+    selectedMemoIds.size < 2 ? "至少选择 2 条笔记" : view === "trash" ? "回收站内不可合并" : isMerging ? "正在合并" : "合并笔记";
+  const selectionToggleTitle = canToggleVisibleMemoSelection ? visibleSelectionToggleLabel : "当前列表没有可选择的笔记";
+  const moveTargetTitle =
+    view === "trash" ? "回收站内不可移动" : notebooks.length === 0 ? "没有可移动的笔记本" : isMoving ? "正在移动" : "移动到笔记本";
   const hasListConstraint = Boolean(search.trim()) || filterMode !== "all";
   const activeFilterLabel = filterOptions.find((option) => option.value === filterMode)?.label ?? "全部";
   const activeSortLabel = MEMO_SORT_OPTIONS.find((option) => option.value === sortMode)?.label ?? "最近更新";
@@ -2641,6 +2696,23 @@ const MemoListPane = ({
       scrollContainer.scrollTop += selectedRect.bottom - containerRect.bottom;
     }
   }, [selectedMemoId, visibleMemoIds]);
+
+  useEffect(() => {
+    if (!selectionMode) {
+      setMobileMoveOpen(false);
+      setMobileMoreOpen(false);
+      return;
+    }
+
+    setDesktopActionsOpen(false);
+    setDesktopFilterOpen(false);
+    setDesktopSortOpen(false);
+    setContextMoveOpen(false);
+    setMemoContextMenu(null);
+    setMobileListActionsOpen(false);
+    setMobileMoveOpen(false);
+    setMobileMoreOpen(false);
+  }, [selectionMode]);
 
   const handleToggleMemo = (memoId: string, event?: MouseEvent<HTMLElement>) => {
     const currentIndex = visibleMemoIds.indexOf(memoId);
@@ -2793,7 +2865,7 @@ const MemoListPane = ({
             >
               <X className="h-5 w-5" />
             </button>
-            <div className="min-w-0 truncate text-lg font-semibold text-slate-900">已选择 {selectedMemoIds.size} 条</div>
+            <div className="min-w-0 truncate text-lg font-semibold text-slate-900">{selectionCountLabel}</div>
           </div>
         ) : (
           <MobileHomeHeader
@@ -2804,7 +2876,7 @@ const MemoListPane = ({
           />
         )}
         <MobileQuickActions
-          canCreateMemo={canCreateMemo}
+          canCreateMemo={canCreateMemo && view !== "trash"}
           isCreating={isCreating}
           locked={selectionMode}
           onCreateChecklist={onCreateChecklist}
@@ -2819,24 +2891,19 @@ const MemoListPane = ({
               className="flex min-w-0 items-center gap-1 rounded-md px-1 py-1 text-left transition hover:bg-emerald-50 lg:hidden"
               type="button"
               title="切换笔记本"
+              aria-label="切换笔记本"
               onClick={onOpenNotebookPicker}
             >
               <span className="max-w-[190px] truncate text-lg font-semibold text-slate-950">{listTitle}</span>
               <ChevronDown className="h-4 w-4 shrink-0 text-slate-500" />
             </button>
-            <div className="min-w-0">
-              <div className="hidden truncate text-lg font-semibold text-slate-950 lg:block lg:text-sm">{listTitle}</div>
-              <div className="text-xs text-slate-500">
-                <span className="hidden lg:inline">{listContextLabel} · </span>
-                {listCountLabel}
-              </div>
-            </div>
           </div>
           <button
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-slate-600 transition hover:bg-emerald-50 hover:text-emerald-700"
             type="button"
             title="列表选项"
             aria-label="列表选项"
+            aria-expanded={mobileListActionsOpen}
             onClick={() => setMobileListActionsOpen(true)}
           >
             <MoreHorizontal className="h-5 w-5" />
@@ -3107,19 +3174,20 @@ const MemoListPane = ({
           <div className="sticky top-0 z-10 mb-3 hidden flex-wrap items-center justify-between gap-2 rounded-md border border-emerald-100 bg-white px-3 py-2 shadow-panel lg:flex">
             <div className="flex items-center gap-2 text-sm font-medium">
               <CheckSquare className="h-4 w-4 text-emerald-700" />
-              {selectedMemoIds.size} 已选择
+              {selectionCountLabel}
             </div>
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <Button
                 size="sm"
                 variant="ghost"
+                title={selectionToggleTitle}
                 onClick={allVisibleMemosSelected ? handleClearVisibleMemos : handleSelectAllVisibleMemos}
                 disabled={!canToggleVisibleMemoSelection}
               >
                 <CheckSquare className="h-4 w-4" />
                 {allVisibleMemosSelected ? "全不选" : "全选"}
               </Button>
-              <Button size="sm" variant="ghost" onClick={onClearSelection}>
+              <Button size="sm" variant="ghost" title="取消选择" onClick={onClearSelection}>
                 <X className="h-4 w-4" />
                 取消
               </Button>
@@ -3128,7 +3196,7 @@ const MemoListPane = ({
                 value={moveTargetNotebookId}
                 disabled={view === "trash" || notebooks.length === 0 || isMoving}
                 onChange={(event) => setMoveTargetNotebookId(event.target.value)}
-                title="移动到笔记本"
+                title={moveTargetTitle}
               >
                 {moveNotebookOptions.map((item) => (
                   <option key={item.id} value={item.id}>
@@ -3139,6 +3207,7 @@ const MemoListPane = ({
               <Button
                 size="sm"
                 variant="soft"
+                title={selectionMoveTitle}
                 onClick={() => onMoveSelectedMemos(moveTargetNotebookId)}
                 disabled={selectedMemoIds.size === 0 || !moveTargetNotebookId || isMoving || view === "trash"}
               >
@@ -3148,6 +3217,7 @@ const MemoListPane = ({
               <Button
                 size="sm"
                 variant="solid"
+                title={selectionMergeTitle}
                 onClick={onMerge}
                 disabled={selectedMemoIds.size < 2 || isMerging || view === "trash"}
               >
@@ -3157,6 +3227,7 @@ const MemoListPane = ({
               <Button
                 size="sm"
                 variant="danger"
+                title={selectionDeleteTitle}
                 onClick={onDeleteSelectedMemos}
                 disabled={selectedMemoIds.size === 0 || isDeleting}
               >
@@ -3335,9 +3406,11 @@ const MemoListPane = ({
       ) : null}
       {selectionMode ? (
         <MobileSelectionActionBar
+          canDelete={selectedMemoIds.size > 0 && !isDeleting}
           canMove={selectedMemoIds.size > 0 && view !== "trash" && notebooks.length > 0 && !isMoving}
-          isDeleting={selectedMemoIds.size === 0 || isDeleting}
+          deleteTitle={selectionDeleteTitle}
           isTrashView={view === "trash"}
+          moveTitle={selectionMoveTitle}
           onDelete={onDeleteSelectedMemos}
           onOpenMore={() => setMobileMoreOpen(true)}
           onOpenMove={() => setMobileMoveOpen(true)}
@@ -3346,6 +3419,7 @@ const MemoListPane = ({
       {mobileListActionsOpen ? (
         <MobileListActionsSheet
           canSelectMemos={canEnterSelectionMode}
+          isSelectionMode={selectionMode}
           listDensity={listDensity}
           sortMode={sortMode}
           onClose={() => setMobileListActionsOpen(false)}
@@ -3371,11 +3445,9 @@ const MemoListPane = ({
           }}
           onListDensityChange={(value) => {
             handleListDensityChange(value);
-            setMobileListActionsOpen(false);
           }}
           onSortModeChange={(value) => {
             setSortMode(value);
-            setMobileListActionsOpen(false);
           }}
         />
       ) : null}
@@ -3397,8 +3469,10 @@ const MemoListPane = ({
         <MobileSelectionMoreSheet
           canMerge={selectedMemoIds.size >= 2 && view !== "trash" && !isMerging}
           canToggleVisibleSelection={canToggleVisibleMemoSelection}
+          mergeTitle={selectionMergeTitle}
           selectedCount={selectedMemoIds.size}
           selectionToggleLabel={visibleSelectionToggleLabel}
+          selectionToggleTitle={selectionToggleTitle}
           onToggleVisibleSelection={() => {
             setMobileMoreOpen(false);
             if (allVisibleMemosSelected) {
@@ -3768,7 +3842,7 @@ const MemoCard = ({
               onToggle(event);
             }}
           >
-            <CheckCircle2 className="h-6 w-6" />
+            <Check className="h-5 w-5 stroke-[3]" />
           </button>
         ) : null}
         <button
