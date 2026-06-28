@@ -76,7 +76,8 @@ body {
     linear-gradient(180deg, rgba(247, 248, 244, 0.98), rgba(239, 243, 235, 0.98)),
     #f6f7f3;
   color: #0f172a;
-  overscroll-behavior: none;
+  overscroll-behavior-x: none;
+  overscroll-behavior-y: auto;
 }
 
 button,
