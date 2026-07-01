@@ -353,7 +353,7 @@ const McpTitleWithHelp = () => {
     <div className="w-fit max-w-full">
       <CardTitle className="flex items-center gap-2 text-sm">
         <KeyRound className="h-4 w-4 text-emerald-700" />
-        API & MCP 授权
+        生成 MCP 配置
         <Dialog>
           <DialogTrigger asChild>
             <Button size="sm" variant="outline" className="h-7 bg-white px-2.5 text-xs" type="button">
@@ -607,7 +607,7 @@ const TokenCard = ({
   <Card className="w-full min-w-0 overflow-hidden shadow-none">
     <CardHeader className="p-4">
       <McpTitleWithHelp />
-      <CardDescription className="text-xs leading-4">为 MCP 客户端或第三方工具生成访问凭证。</CardDescription>
+      <CardDescription className="text-xs leading-4">让 AI Agent 可以读取和整理你的笔记。</CardDescription>
     </CardHeader>
     <CardContent className="space-y-4 p-4 pt-0">
       {createdToken && <CreatedTokenNotice token={createdToken} />}
