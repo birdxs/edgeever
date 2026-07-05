@@ -322,7 +322,7 @@ export const MemoCard = ({
       <div className={cn("flex min-h-[132px] items-center", listDensity === "compact" && "min-h-[84px] lg:min-h-[76px]")}>
         {showSelectionControl && (
           <button
-            className="ml-2 flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/70 focus-visible:ring-offset-2 lg:ml-4 lg:h-8 lg:w-8"
+            className="ml-2 flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/70 focus-visible:ring-offset-2 lg:ml-3 lg:h-6 lg:w-6"
             type="button"
             title={selectionControlLabel}
             aria-label={selectionControlLabel}
@@ -334,14 +334,14 @@ export const MemoCard = ({
           >
             <span
               className={cn(
-                "flex h-6 w-6 items-center justify-center rounded-full border transition-all duration-150 lg:h-5 lg:w-5",
+                "flex h-6 w-6 items-center justify-center rounded-full border transition-all duration-150 lg:h-4 lg:w-4",
                 checked
                   ? "border-slate-700 bg-slate-700 text-white shadow-[0_4px_10px_rgba(15,23,42,0.16)]"
                   : "border-slate-300 bg-white text-transparent"
               )}
               aria-hidden="true"
             >
-              <Check className="h-3.5 w-3.5 stroke-[3]" />
+              <Check className="h-3.5 w-3.5 stroke-[3] lg:h-2.5 lg:w-2.5" />
             </span>
           </button>
         )}
