@@ -50,6 +50,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@
 import { EditorToolbar } from "./EditorToolbar";
 import { RevisionHistoryDialog } from "./dialogs/RevisionHistoryDialog";
 import { api } from "@/lib/api";
+import { openStandaloneMobileEditor } from "@/lib/mobile-editor";
 import { cn, formatDateTime, parseTagsText } from "@/lib/utils";
 import { docToMarkdown, markdownToDoc, type Notebook, type MemoDetail, type TiptapDoc } from "@edgeever/shared";
 import { compressImageForUpload } from "@/lib/image-compression";
@@ -465,14 +466,6 @@ type EditorPaneProps = {
 
 type RichEditorPaneProps = EditorPaneProps & {
   onRequestMobileNativeEdit?: () => void;
-};
-
-const openStandaloneMobileEditor = (memoId: string) => {
-  const params = new URLSearchParams({
-    memoId,
-    returnTo: "/",
-  });
-  window.location.href = `/mobile-edit.html#${params.toString()}`;
 };
 
 const MobileNativeEditorPane = ({

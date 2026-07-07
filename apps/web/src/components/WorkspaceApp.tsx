@@ -27,6 +27,7 @@ import {
 import { MemoListPane, MemoSelectionActionBar } from "./MemoListPane";
 import { AppConfirmDialog, MemoDeleteConfirmDialog, NotebookNameDialog } from "./dialogs/ConfirmDialogs";
 import { api } from "@/lib/api";
+import { openStandaloneMobileEditor } from "@/lib/mobile-editor";
 import { cn } from "@/lib/utils";
 import { createExcerpt, docToText, type Notebook, type AuthUser, type MemoSummary, type MemoDetail } from "@edgeever/shared";
 import type {
@@ -78,14 +79,6 @@ const isStandaloneApp = () =>
   window.matchMedia("(display-mode: standalone)").matches ||
   window.matchMedia("(display-mode: fullscreen)").matches ||
   Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
-
-const openStandaloneMobileEditor = (memoId: string) => {
-  const params = new URLSearchParams({
-    memoId,
-    returnTo: "/",
-  });
-  window.location.href = `/mobile-edit.html#${params.toString()}`;
-};
 
 const getVerticalScrollContainer = (target: EventTarget | null) => {
   let element = target instanceof HTMLElement ? target : null;
