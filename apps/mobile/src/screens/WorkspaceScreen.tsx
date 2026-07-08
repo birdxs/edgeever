@@ -917,7 +917,7 @@ export const WorkspaceScreen = () => {
         }}
         updateMutation={updateMemoMutation}
       />
-      <RichEditorModal baseUrl={session?.baseUrl ?? ""} memo={richEditingMemo} onClose={closeRichEditor} token={session?.token ?? ""} />
+      <RichEditorModal baseUrl={session?.baseUrl ?? ""} memo={richEditingMemo} notebooks={notebooks} onClose={closeRichEditor} token={session?.token ?? ""} />
 
       <NotebookManagerModal
         notebookSortMode={notebookSortMode}
@@ -3507,11 +3507,13 @@ const HighlightedDetailText = ({
 const RichEditorModal = ({
   baseUrl,
   memo,
+  notebooks,
   onClose,
   token,
 }: {
   baseUrl: string;
   memo: MemoDetail | null;
+  notebooks: Notebook[];
   onClose: () => void;
   token: string;
 }) => {
@@ -3519,6 +3521,8 @@ const RichEditorModal = ({
   const [error, setError] = useState(false);
   const editorUrl = memo && baseUrl ? buildRichEditorUrl(baseUrl, memo.id) : "";
   const injectedJavaScriptBeforeContentLoaded = buildRichEditorAuthScript(token);
+  const notebookLabel = memo ? notebooks.find((notebook) => notebook.id === memo.notebookId)?.name ?? "未分类" : "笔记本";
+  const saveLabel = error ? "加载失败" : loading ? "加载中" : "编辑中";
 
   useEffect(() => {
     if (memo) {
@@ -3544,36 +3548,58 @@ const RichEditorModal = ({
 
         {editorUrl ? (
           <View style={styles.richEditorContainer}>
-            {loading ? (
-              <View style={styles.richEditorLoading}>
-                <ActivityIndicator color="#0f172a" />
-                <Text style={styles.mutedText}>正在加载 TipTap 编辑器</Text>
+            <View style={styles.richEditorMeta}>
+              <View style={styles.richEditorTitleBlock}>
+                <Text numberOfLines={1} style={styles.richEditorTitle}>
+                  {memo?.title?.trim() || DEFAULT_MEMO_TITLE}
+                </Text>
+                <Text numberOfLines={1} style={styles.richEditorNotebook}>
+                  {notebookLabel} · 修订 {memo?.revision ?? "-"}
+                </Text>
               </View>
+              <Text style={[styles.richEditorStatus, error ? styles.richEditorStatusError : loading ? styles.richEditorStatusLoading : styles.richEditorStatusActive]}>{saveLabel}</Text>
+            </View>
+            {memo?.tags.length ? (
+              <ScrollView contentContainerStyle={styles.richEditorTagsContent} horizontal showsHorizontalScrollIndicator={false} style={styles.richEditorTags}>
+                {memo.tags.map((tag) => (
+                  <Text key={tag} style={styles.tag}>
+                    #{tag}
+                  </Text>
+                ))}
+              </ScrollView>
             ) : null}
-            {error ? (
-              <View style={styles.centerState}>
-                <Text style={styles.errorText}>富文本编辑器加载失败</Text>
-                <Text style={styles.mutedText}>请确认实例已部署最新版 Web/PWA 资源。</Text>
-              </View>
-            ) : (
-              <WebView
-                allowsBackForwardNavigationGestures
-                injectedJavaScriptBeforeContentLoaded={injectedJavaScriptBeforeContentLoaded}
-                onError={() => {
-                  setLoading(false);
-                  setError(true);
-                }}
-                onLoadEnd={() => setLoading(false)}
-                onNavigationStateChange={(state) => {
-                  if (state.url && !state.url.includes("/mobile-edit.html") && !state.url.startsWith("about:")) {
-                    onClose();
-                  }
-                }}
-                originWhitelist={["http://*", "https://*"]}
-                source={{ uri: editorUrl }}
-                style={styles.richEditorWebView}
-              />
-            )}
+            <View style={styles.richEditorFrame}>
+              {loading ? (
+                <View style={styles.richEditorLoading}>
+                  <ActivityIndicator color="#0f172a" />
+                  <Text style={styles.mutedText}>正在加载 TipTap 编辑器</Text>
+                </View>
+              ) : null}
+              {error ? (
+                <View style={styles.centerState}>
+                  <Text style={styles.errorText}>富文本编辑器加载失败</Text>
+                  <Text style={styles.mutedText}>请确认实例已部署最新版 Web/PWA 资源。</Text>
+                </View>
+              ) : (
+                <WebView
+                  allowsBackForwardNavigationGestures
+                  injectedJavaScriptBeforeContentLoaded={injectedJavaScriptBeforeContentLoaded}
+                  onError={() => {
+                    setLoading(false);
+                    setError(true);
+                  }}
+                  onLoadEnd={() => setLoading(false)}
+                  onNavigationStateChange={(state) => {
+                    if (state.url && !state.url.includes("/mobile-edit.html") && !state.url.startsWith("about:")) {
+                      onClose();
+                    }
+                  }}
+                  originWhitelist={["http://*", "https://*"]}
+                  source={{ uri: editorUrl }}
+                  style={styles.richEditorWebView}
+                />
+              )}
+            </View>
           </View>
         ) : (
           <View style={styles.centerState}>
@@ -5472,6 +5498,66 @@ const styles = StyleSheet.create({
   },
   richEditorContainer: {
     backgroundColor: "#ffffff",
+    flex: 1,
+  },
+  richEditorMeta: {
+    alignItems: "center",
+    backgroundColor: "#ffffff",
+    borderBottomColor: "#e2e8f0",
+    borderBottomWidth: 1,
+    flexDirection: "row",
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  richEditorTitleBlock: {
+    flex: 1,
+    minWidth: 0,
+  },
+  richEditorTitle: {
+    color: "#0f172a",
+    fontSize: 16,
+    fontWeight: "800",
+  },
+  richEditorNotebook: {
+    color: "#64748b",
+    fontSize: 12,
+    fontWeight: "700",
+    marginTop: 3,
+  },
+  richEditorStatus: {
+    borderRadius: 999,
+    fontSize: 12,
+    fontWeight: "800",
+    overflow: "hidden",
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+  },
+  richEditorStatusActive: {
+    backgroundColor: "#ecfdf5",
+    color: "#047857",
+  },
+  richEditorStatusLoading: {
+    backgroundColor: "#eff6ff",
+    color: "#2563eb",
+  },
+  richEditorStatusError: {
+    backgroundColor: "#fef2f2",
+    color: "#b91c1c",
+  },
+  richEditorTags: {
+    backgroundColor: "#ffffff",
+    borderBottomColor: "#e2e8f0",
+    borderBottomWidth: 1,
+    flexGrow: 0,
+    maxHeight: 44,
+  },
+  richEditorTagsContent: {
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  richEditorFrame: {
     flex: 1,
   },
   richEditorLoading: {
