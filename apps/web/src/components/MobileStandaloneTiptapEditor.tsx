@@ -289,24 +289,7 @@ export const MobileStandaloneTiptapEditor = ({
       return;
     }
 
-    const referrerUrl = document.referrer ? new URL(document.referrer) : null;
-    const canRestorePreviousPage = Boolean(referrerUrl && referrerUrl.origin === window.location.origin && window.history.length > 1);
-
-    if (!canRestorePreviousPage) {
-      window.location.replace(returnTo);
-      return;
-    }
-
-    const fallbackTimer = window.setTimeout(() => {
-      if (document.visibilityState !== "hidden") {
-        window.location.replace(returnTo);
-      }
-    }, 900);
-
-    window.addEventListener("pagehide", () => window.clearTimeout(fallbackTimer), { once: true });
-
-    const currentState = window.history.state as { edgeeverMobileEditorBackGuard?: boolean } | null;
-    window.history.go(currentState?.edgeeverMobileEditorBackGuard ? -2 : -1);
+    window.location.replace(returnTo);
   }, [onLeave, returnTo]);
 
   const leavePage = useCallback(async () => {
