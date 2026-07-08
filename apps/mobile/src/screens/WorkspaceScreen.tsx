@@ -433,6 +433,7 @@ export const WorkspaceScreen = () => {
   const canToggleVisibleSelection = memos.length > 0;
   const allVisibleMemosSelected = canToggleVisibleSelection && memos.every((memo) => selectedMemoIds.has(memo.id));
   const nextSelectionPinValue = selectedMemos.some((memo) => !memo.isPinned);
+  const canCreateMemo = memoView !== "trash" && notebooks.length > 0;
   const selectedMemoIndex = selectedMemoId ? memos.findIndex((memo) => memo.id === selectedMemoId) : -1;
   const previousMemoId = selectedMemoIndex > 0 ? memos[selectedMemoIndex - 1]?.id : null;
   const nextMemoId = selectedMemoIndex >= 0 && selectedMemoIndex < memos.length - 1 ? memos[selectedMemoIndex + 1]?.id : null;
@@ -1122,8 +1123,13 @@ export const WorkspaceScreen = () => {
           label="笔记"
           onPress={() => setActiveView("notes")}
         />
-        <Pressable accessibilityRole="button" onPress={() => setCreateOpen(true)} style={styles.bottomCreateButton}>
-          <Plus color="#ffffff" size={28} />
+        <Pressable
+          accessibilityRole="button"
+          disabled={!canCreateMemo}
+          onPress={() => setCreateOpen(true)}
+          style={[styles.bottomCreateButton, !canCreateMemo && styles.bottomCreateButtonDisabled]}
+        >
+          <Plus color={canCreateMemo ? "#ffffff" : "#e2e8f0"} size={28} />
         </Pressable>
         <BottomNavItem
           active={activeView === "settings"}
@@ -6737,6 +6743,10 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.28,
     shadowRadius: 18,
     width: 56,
+  },
+  bottomCreateButtonDisabled: {
+    backgroundColor: "#cbd5e1",
+    shadowOpacity: 0,
   },
   selectionBar: {
     backgroundColor: "#ffffff",
