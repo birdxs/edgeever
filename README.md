@@ -50,7 +50,7 @@ The automated helper commands are recommended. If you create the Cloudflare reso
 
 - Serverless, 100% free, and zero maintenance: Built on Cloudflare's Serverless architecture, running entirely within free tiers. Store up to 150k notes and 50k images without any hosting fees.
 - Open data: notes are stored in Cloudflare D1, based on standard SQLite, and can be read through REST API, MCP, and CLI.
-- AI Agent friendly: built-in MCP support lets tools such as Codex, Claude Code, and Antigravity read and organize notes with authorization.
+- AI Agent friendly: built-in MCP support lets tools such as Codex, Claude Code, and Antigravity read, organize, and maintain notes, while enabling integrations with Notion databases and Feishu Bitable.
 - Uncapped multi-device sync: self-hosted API means no restrictive commercial limits on the number of active login devices, supporting seamless synchronization across PC, tablet, and mobile (via PWA or browser).
 - Three-pane layout: notebook tree, note list, and main editor.
 - Unlimited nested notebooks.
