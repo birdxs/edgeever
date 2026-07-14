@@ -56,7 +56,7 @@ The automated helper commands are recommended. If you create the Cloudflare reso
 
 - Serverless, 100% free, and zero maintenance: Built on Cloudflare's Serverless architecture, running entirely within free tiers. Store up to 150k notes and 50k images without any hosting fees.
 - Open data: notes are stored in Cloudflare D1, based on standard SQLite, and can be read and managed through REST API, MCP, and CLI without locking your data to a single notes product.
-- Markdown ZIP export: export active notes with Front Matter metadata, nested notebook structure, images, and attachments using portable relative paths.
+- EdgeEver ZIP import and export: one archive combines human-readable Markdown, Front Matter, nested notebook structure, and relative-path attachments with versioned structured data and revision history for complete recovery between EdgeEver instances.
 - AI Agent friendly: built-in MCP support lets tools such as Codex, Claude Code, and Antigravity read, organize, and maintain notes, while enabling integrations with Notion databases and Feishu Bitable.
 - Uncapped multi-device sync: self-hosted API means no restrictive commercial limits on the number of active login devices, supporting seamless synchronization across PC, tablet, and mobile (via PWA or browser).
 - Three-pane layout: notebook tree, note list, and main editor.
@@ -155,7 +155,7 @@ content_markdown  API, Agent, import, and export format
 content_text      Search, summary, and indexing text
 ```
 
-To create a portable Markdown ZIP archive, open **Profile** -> **Export notes**. The export preserves notebook hierarchy and stores images and attachments alongside each note using relative paths.
+Open **Profile** -> **Import and export** to export or import an EdgeEver ZIP. Its `notes/` directory is directly readable and portable as Markdown, while its structured data supports complete recovery between EdgeEver instances. Import preserves unrelated target data and overwrites records with matching EdgeEver IDs.
 
 ## API
 

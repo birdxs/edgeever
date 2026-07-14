@@ -11,6 +11,7 @@ import {
   markdownToDoc,
   isSuspiciousMemoOverwrite,
   isMemoEditBindingValid,
+  JsonBackupResourceMetadataSchema,
   MemoCreateSchema,
   MemoUpdateSchema,
   MergeMemosSchema,
@@ -19,6 +20,8 @@ import {
   TagRenameSchema,
   NotebookCreateSchema,
   NotebookUpdateSchema,
+  RestoreJsonMemosSchema,
+  RestoreJsonNotebooksSchema,
   type ApiToken,
   type CreatedApiToken,
   type MemoDetail,
@@ -26,6 +29,10 @@ import {
   type MemoRevision,
   type MemoSummary,
   type MemoUpdateInput,
+  type JsonBackupMemo,
+  type JsonBackupNotebook,
+  type JsonBackupResource,
+  type JsonBackupRevision,
   type Notebook,
   type NotebookCreateInput,
   type Resource,
@@ -134,6 +141,8 @@ type MemoRevisionRow = {
   created_by: string;
   created_at: string;
 };
+
+type BackupRevisionRow = MemoRevisionRow;
 
 type MemoEditSessionRow = {
   id: string;
@@ -375,7 +384,7 @@ app.use(
   cors({
     origin: ["http://127.0.0.1:5173", "http://localhost:5173"],
     allowHeaders: ["Content-Type", "Authorization"],
-    allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     credentials: true,
   })
 );
@@ -1299,6 +1308,196 @@ app.get("/api/v1/exports/markdown", async (c) => {
     totalCount,
     nextOffset,
   });
+});
+
+app.get("/api/v1/backups/json", async (c) => {
+  const denied = requireScopes(c, "read:memos", "read:resources");
+
+  if (denied) {
+    return denied;
+  }
+
+  const limit = clampNumber(Number(c.req.query("limit") ?? 25), 1, 50);
+  const offset = clampNumber(Number(c.req.query("offset") ?? 0), 0, 1_000_000);
+  const [memoRows, totalRow] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT m.id, m.notebook_id, m.title, m.excerpt, m.tags_json, m.is_pinned,
+              m.is_archived, m.is_deleted, m.created_at, m.updated_at, m.deleted_at, mc.revision,
+              mc.content_json, mc.content_markdown, mc.content_text, mc.content_hash,
+              m.source_memo_ids, m.merge_source_count, m.merged_into_memo_id
+       FROM memos m
+       INNER JOIN memo_contents mc ON mc.memo_id = m.id
+       WHERE m.is_deleted = 0
+       ORDER BY m.created_at ASC, m.id ASC
+       LIMIT ? OFFSET ?`
+    )
+      .bind(limit, offset)
+      .all<MemoDetailRow>(),
+    c.env.DB.prepare(`SELECT COUNT(*) AS count FROM memos WHERE is_deleted = 0`).first<{ count: number }>(),
+  ]);
+  const memoIds = memoRows.results.map((row) => row.id);
+  let resources: Resource[] = [];
+  let revisions: JsonBackupRevision[] = [];
+
+  if (memoIds.length > 0) {
+    const placeholders = memoIds.map(() => "?").join(", ");
+    const [resourceRows, revisionRows] = await Promise.all([
+      c.env.DB.prepare(
+        `SELECT id, memo_id, original_memo_id, bucket_name, object_key, kind, mime_type,
+                filename, byte_size, sha256, width, height, created_at, updated_at
+         FROM resources
+         WHERE is_deleted = 0 AND memo_id IN (${placeholders})
+         ORDER BY memo_id ASC, created_at ASC, id ASC`
+      )
+        .bind(...memoIds)
+        .all<ResourceRow>(),
+      c.env.DB.prepare(
+        `SELECT id, memo_id, revision, title, tags_json, content_json, content_markdown,
+                content_text, content_hash, created_by, created_at
+         FROM memo_revisions
+         WHERE memo_id IN (${placeholders})
+         ORDER BY memo_id ASC, revision ASC, created_at ASC`
+      )
+        .bind(...memoIds)
+        .all<BackupRevisionRow>(),
+    ]);
+    resources = resourceRows.results.map(mapResource);
+    revisions = revisionRows.results.map(mapJsonBackupRevision);
+  }
+
+  const totalCount = totalRow?.count ?? memoRows.results.length;
+  const nextOffset = offset + memoRows.results.length < totalCount ? offset + memoRows.results.length : null;
+
+  return c.json({
+    memos: memoRows.results.map(mapMemoDetail),
+    resources,
+    revisions,
+    totalCount,
+    nextOffset,
+  });
+});
+
+app.post("/api/v1/restores/json/notebooks", zValidator("json", RestoreJsonNotebooksSchema), async (c) => {
+  const userOnly = requireUser(c);
+  if (userOnly) {
+    return userOnly;
+  }
+
+  await restoreJsonNotebooks(c.env.DB, c.req.valid("json").notebooks as JsonBackupNotebook[]);
+  return c.json({ ok: true });
+});
+
+app.post("/api/v1/restores/json/memos", zValidator("json", RestoreJsonMemosSchema), async (c) => {
+  const userOnly = requireUser(c);
+  if (userOnly) {
+    return userOnly;
+  }
+
+  await restoreJsonMemos(c.env.DB, c.req.valid("json").memos as JsonBackupMemo[]);
+  return c.json({ ok: true });
+});
+
+app.put("/api/v1/restores/json/resources/:id", async (c) => {
+  const userOnly = requireUser(c);
+  if (userOnly) {
+    return userOnly;
+  }
+
+  const form = await c.req.raw.formData();
+  const file = form.get("file");
+  const metadataValue = form.get("metadata");
+  if (!(file instanceof File) || typeof metadataValue !== "string") {
+    return badRequest(c, "Restore resource file and metadata are required.");
+  }
+
+  let metadataInput: unknown;
+  try {
+    metadataInput = JSON.parse(metadataValue);
+  } catch {
+    return badRequest(c, "Restore resource metadata must be valid JSON.");
+  }
+
+  const parsed = JsonBackupResourceMetadataSchema.safeParse(metadataInput);
+  if (!parsed.success || parsed.data.id !== c.req.param("id")) {
+    return badRequest(c, "Restore resource metadata is invalid.");
+  }
+
+  const metadata = parsed.data as JsonBackupResource;
+  const memo = await getMemoDetail(c.env.DB, metadata.memoId);
+  if (!memo) {
+    return notFound(c, "Restore target memo not found.");
+  }
+
+  const maxBytes = metadata.kind === "image" ? MAX_IMAGE_UPLOAD_BYTES : MAX_ATTACHMENT_UPLOAD_BYTES;
+  if (file.size <= 0 || file.size > maxBytes) {
+    return apiError(c, "upload_too_large", "Backup resource size is invalid.", 413);
+  }
+
+  const filename = normalizeFilename(metadata.filename || file.name) || `${metadata.kind}-${metadata.id}`;
+  const objectKey = `restores/${metadata.memoId}/${metadata.id}/${Date.now()}-${filename}`;
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const previous = await c.env.DB.prepare(
+    `SELECT object_key FROM resources WHERE id = ?`
+  ).bind(metadata.id).first<{ object_key: string }>();
+  const originalMemo = metadata.originalMemoId
+    ? await c.env.DB.prepare(`SELECT id FROM memos WHERE id = ?`).bind(metadata.originalMemoId).first<{ id: string }>()
+    : null;
+
+  await c.env.RESOURCES.put(objectKey, bytes, {
+    httpMetadata: { contentType: metadata.mimeType ?? file.type ?? "application/octet-stream" },
+    customMetadata: { memoId: metadata.memoId, resourceId: metadata.id, restored: "true" },
+  });
+
+  try {
+    const now = isoNow();
+    await c.env.DB.prepare(
+      `INSERT INTO resources (
+        id, memo_id, original_memo_id, bucket_name, object_key, kind, mime_type, filename,
+        byte_size, sha256, width, height, metadata_json, is_deleted, created_at, updated_at, deleted_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL)
+      ON CONFLICT(id) DO UPDATE SET
+        memo_id = excluded.memo_id,
+        original_memo_id = excluded.original_memo_id,
+        bucket_name = excluded.bucket_name,
+        object_key = excluded.object_key,
+        kind = excluded.kind,
+        mime_type = excluded.mime_type,
+        filename = excluded.filename,
+        byte_size = excluded.byte_size,
+        sha256 = excluded.sha256,
+        width = excluded.width,
+        height = excluded.height,
+        metadata_json = excluded.metadata_json,
+        is_deleted = 0,
+        updated_at = excluded.updated_at,
+        deleted_at = NULL`
+    ).bind(
+      metadata.id,
+      metadata.memoId,
+      originalMemo?.id ?? null,
+      c.env.EDGE_EVER_R2_BUCKET_NAME?.trim() || DEFAULT_R2_BUCKET_NAME,
+      objectKey,
+      metadata.kind,
+      metadata.mimeType ?? file.type ?? null,
+      filename,
+      bytes.byteLength,
+      await sha256Bytes(bytes),
+      metadata.width,
+      metadata.height,
+      JSON.stringify({ source: "edgeever-zip-import" }),
+      metadata.createdAt,
+      now
+    ).run();
+  } catch (error) {
+    await c.env.RESOURCES.delete(objectKey);
+    throw error;
+  }
+
+  if (previous?.object_key && previous.object_key !== objectKey) {
+    await c.env.RESOURCES.delete(previous.object_key);
+  }
+
+  return c.json({ ok: true });
 });
 
 app.get("/api/v1/resources", async (c) => {
@@ -3376,6 +3575,172 @@ const mapMemoRevision = (row: MemoRevisionRow): MemoRevision => ({
   createdBy: row.created_by,
   createdAt: row.created_at,
 });
+
+const mapJsonBackupRevision = (row: BackupRevisionRow): JsonBackupRevision => ({
+  id: row.id,
+  memoId: row.memo_id,
+  revision: row.revision,
+  title: row.title,
+  tags: parseJsonArray(row.tags_json),
+  contentJson: parseDoc(row.content_json),
+  contentMarkdown: row.content_markdown,
+  contentText: row.content_text,
+  contentHash: row.content_hash,
+  createdBy: row.created_by,
+  createdAt: row.created_at,
+});
+
+const restoreJsonNotebooks = async (db: D1Database, notebooks: JsonBackupNotebook[]) => {
+  const statements = notebooks.map((notebook) =>
+    db.prepare(
+      `INSERT INTO notebooks (
+        id, parent_id, name, slug, icon, color, sort_order, is_deleted, created_at, updated_at, deleted_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL)
+      ON CONFLICT(id) DO UPDATE SET
+        parent_id = excluded.parent_id,
+        name = excluded.name,
+        slug = excluded.slug,
+        icon = excluded.icon,
+        color = excluded.color,
+        sort_order = excluded.sort_order,
+        is_deleted = 0,
+        updated_at = excluded.updated_at,
+        deleted_at = NULL`
+    ).bind(
+      notebook.id,
+      notebook.parentId,
+      notebook.name,
+      notebook.slug,
+      notebook.icon,
+      notebook.color,
+      notebook.sortOrder,
+      notebook.createdAt,
+      notebook.updatedAt
+    )
+  );
+
+  await db.batch(statements);
+};
+
+const restoreJsonMemos = async (db: D1Database, backups: JsonBackupMemo[]) => {
+  for (const backup of backups) {
+    const memo = backup.memo;
+    const contentJson = parseDoc(JSON.stringify(memo.contentJson));
+    const contentMarkdown = memo.contentMarkdown || docToMarkdown(contentJson);
+    const contentText = docToText(contentJson);
+    const contentHash = await sha256(contentMarkdown + JSON.stringify(contentJson));
+    const title = normalizeMemoTitle(memo.title);
+    const tags = normalizeTags(memo.tags);
+
+    if (backup.revisions.some((revision) => revision.memoId !== memo.id)) {
+      throw new AppError("invalid_backup", "A backup revision belongs to a different memo.", 400);
+    }
+
+    await db.batch([
+      db.prepare(
+        `INSERT INTO memos (
+          id, notebook_id, title, excerpt, tags_json, is_pinned, is_archived, is_deleted,
+          source_memo_ids, merge_source_count, merged_into_memo_id,
+          created_by, updated_by, created_at, updated_at, deleted_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, 'restore', 'restore', ?, ?, NULL)
+        ON CONFLICT(id) DO UPDATE SET
+          notebook_id = excluded.notebook_id,
+          title = excluded.title,
+          excerpt = excluded.excerpt,
+          tags_json = excluded.tags_json,
+          is_pinned = excluded.is_pinned,
+          is_archived = excluded.is_archived,
+          is_deleted = 0,
+          source_memo_ids = excluded.source_memo_ids,
+          merge_source_count = excluded.merge_source_count,
+          merged_into_memo_id = NULL,
+          updated_by = 'restore',
+          updated_at = excluded.updated_at,
+          deleted_at = NULL`
+      ).bind(
+        memo.id,
+        memo.notebookId,
+        title,
+        createExcerpt(contentText),
+        JSON.stringify(tags),
+        memo.isPinned ? 1 : 0,
+        memo.isArchived ? 1 : 0,
+        JSON.stringify(memo.sourceMemoIds),
+        memo.mergeSourceCount,
+        memo.createdAt,
+        memo.updatedAt
+      ),
+      db.prepare(
+        `INSERT INTO memo_contents (
+          memo_id, content_json, content_markdown, content_text, content_hash, revision, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(memo_id) DO UPDATE SET
+          content_json = excluded.content_json,
+          content_markdown = excluded.content_markdown,
+          content_text = excluded.content_text,
+          content_hash = excluded.content_hash,
+          revision = excluded.revision,
+          updated_at = excluded.updated_at`
+      ).bind(
+        memo.id,
+        JSON.stringify(contentJson),
+        contentMarkdown,
+        contentText,
+        contentHash,
+        memo.revision,
+        memo.createdAt,
+        memo.updatedAt
+      ),
+      db.prepare(`DELETE FROM memos_fts WHERE memo_id = ?`).bind(memo.id),
+      db.prepare(
+        `INSERT INTO memos_fts (memo_id, title, content_text, tags) VALUES (?, ?, ?, ?)`
+      ).bind(memo.id, title, contentText, tags.join(" ")),
+      db.prepare(`DELETE FROM memo_revisions WHERE memo_id = ?`).bind(memo.id),
+    ]);
+
+    for (let index = 0; index < backup.revisions.length; index += 50) {
+      const statements = backup.revisions.slice(index, index + 50).map((revision) => {
+        const revisionJson = parseDoc(JSON.stringify(revision.contentJson));
+        const revisionMarkdown = revision.contentMarkdown || docToMarkdown(revisionJson);
+        const revisionText = docToText(revisionJson);
+        return db.prepare(
+          `INSERT INTO memo_revisions (
+            id, memo_id, revision, title, content_json, content_markdown,
+            content_hash, created_by, created_at, tags_json, content_text
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            memo_id = excluded.memo_id,
+            revision = excluded.revision,
+            title = excluded.title,
+            content_json = excluded.content_json,
+            content_markdown = excluded.content_markdown,
+            content_hash = excluded.content_hash,
+            created_by = excluded.created_by,
+            created_at = excluded.created_at,
+            tags_json = excluded.tags_json,
+            content_text = excluded.content_text`
+        ).bind(
+          revision.id,
+          memo.id,
+          revision.revision,
+          normalizeMemoTitle(revision.title),
+          JSON.stringify(revisionJson),
+          revisionMarkdown,
+          revision.contentHash || "",
+          revision.createdBy,
+          revision.createdAt,
+          JSON.stringify(normalizeTags(revision.tags)),
+          revisionText
+        );
+      });
+      await db.batch(statements);
+    }
+  }
+
+  await audit(db, "user", null, "backup.restore", "backup", createId("restore"), {
+    memoCount: backups.length,
+  });
+};
 
 const mapResource = (row: ResourceRow): Resource => ({
   id: row.id,

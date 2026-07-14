@@ -1,0 +1,144 @@
+import { describe, expect, test } from "bun:test";
+import type { JsonBackupMemo, JsonBackupNotebook, MemoDetail, Notebook, Resource } from "@edgeever/shared";
+import { strFromU8 } from "fflate";
+import { createEdgeEverZip, parseEdgeEverZip, restoreEdgeEverZip } from "../apps/web/src/lib/json-backup";
+
+const notebook = (id: string, name: string, parentId: string | null = null): Notebook => ({
+  id,
+  parentId,
+  name,
+  slug: id,
+  icon: "notebook",
+  color: null,
+  sortOrder: parentId ? 20 : 10,
+  memoCount: 1,
+  lastMemoUpdatedAt: "2026-07-14T00:00:00.000Z",
+  createdAt: "2026-07-13T00:00:00.000Z",
+  updatedAt: "2026-07-14T00:00:00.000Z",
+});
+
+const memo: MemoDetail = {
+  id: "memo_backup",
+  notebookId: "nb_child",
+  title: "Backup note",
+  excerpt: "Hello",
+  tags: ["backup"],
+  isPinned: false,
+  isArchived: false,
+  isDeleted: false,
+  revision: 1,
+  createdAt: "2026-07-13T00:00:00.000Z",
+  updatedAt: "2026-07-14T00:00:00.000Z",
+  deletedAt: null,
+  contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Hello" }] }] },
+  contentMarkdown: "Hello\n\n![asset](/api/v1/resources/res_backup/blob)",
+  contentText: "Hello",
+  contentHash: "hash",
+  sourceMemoIds: [],
+  mergeSourceCount: 0,
+  mergedIntoMemoId: null,
+};
+
+const resource: Resource = {
+  id: "res_backup",
+  memoId: memo.id,
+  originalMemoId: null,
+  kind: "image",
+  mimeType: "image/png",
+  filename: "asset.png",
+  byteSize: 3,
+  sha256: "sha",
+  width: 10,
+  height: 10,
+  createdAt: memo.createdAt,
+  updatedAt: memo.updatedAt,
+  url: "/api/v1/resources/res_backup/blob",
+};
+
+describe("EdgeEver ZIP", () => {
+  test("combines readable Markdown with versioned recovery data", async () => {
+    const blob = await createEdgeEverZip(
+      {
+        listNotebooks: async () => ({ notebooks: [notebook("nb_child", "Child", "nb_root"), notebook("nb_root", "Root")] }),
+        getPage: async () => ({
+          memos: [memo],
+          resources: [resource],
+          revisions: [{
+            id: "rev_backup",
+            memoId: memo.id,
+            revision: 0,
+            title: memo.title,
+            tags: memo.tags,
+            contentJson: memo.contentJson,
+            contentMarkdown: "Hello",
+            contentText: "Hello",
+            contentHash: "old-hash",
+            createdBy: "user",
+            createdAt: memo.createdAt,
+          }],
+          totalCount: 1,
+          nextOffset: null,
+        }),
+        getResourceBlob: async () => new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }),
+      },
+      { edgeeverVersion: "0.1.13", buildId: "test-build" }
+    );
+    const backup = await parseEdgeEverZip(blob);
+
+    expect(backup.manifest.format).toBe("edgeever-zip");
+    expect(backup.manifest.formatVersion).toBe(1);
+    expect(backup.manifest.counts).toEqual({ notebooks: 2, memos: 1, revisions: 1, resources: 1 });
+    expect(backup.notebooks.map((item) => item.id)).toEqual(["nb_root", "nb_child"]);
+    expect(backup.memos[0].memo.contentMarkdown).toBe(memo.contentMarkdown);
+    expect(Array.from(backup.files[backup.memos[0].resources[0].archivePath])).toEqual([1, 2, 3]);
+    const markdown = strFromU8(backup.files["notes/Root/Child/Backup note.md"]);
+    expect(markdown).toContain("edgeever_id: \"memo_backup\"");
+    expect(markdown).toContain("![asset](Backup%20note.assets/asset.png)");
+    expect(backup.memos[0].resources[0].archivePath).toBe("notes/Root/Child/Backup note.assets/asset.png");
+  });
+
+  test("restores notebooks before memos and binary resources", async () => {
+    const calls: string[] = [];
+    const { url: _url, ...resourceMetadata } = resource;
+    const backupMemo: JsonBackupMemo = {
+      memo,
+      revisions: [],
+      resources: [{ ...resourceMetadata, archivePath: "resources/res_backup/asset.png" }],
+    };
+    const backup = {
+      manifest: {
+        format: "edgeever-zip" as const,
+        formatVersion: 1 as const,
+        schemaVersion: 1,
+        edgeeverVersion: "0.1.13",
+        buildId: "test-build",
+        exportedAt: "2026-07-14T00:00:00.000Z",
+        includesTrash: false as const,
+        counts: { notebooks: 1, memos: 1, revisions: 0, resources: 1 },
+      },
+      notebooks: [{
+        id: "nb_child",
+        parentId: null,
+        name: "Child",
+        slug: null,
+        icon: null,
+        color: null,
+        sortOrder: 0,
+        createdAt: memo.createdAt,
+        updatedAt: memo.updatedAt,
+      }] satisfies JsonBackupNotebook[],
+      memos: [backupMemo],
+      files: { "resources/res_backup/asset.png": new Uint8Array([1, 2, 3]) },
+    };
+
+    await restoreEdgeEverZip(backup, {
+      restoreNotebooks: async () => { calls.push("notebooks"); },
+      restoreMemos: async () => { calls.push("memos"); },
+      restoreResource: async (_id, _metadata, file) => {
+        calls.push(`resource:${file.size}`);
+      },
+    });
+
+    expect(calls).toEqual(["notebooks", "memos", "resource:3"]);
+  });
+});

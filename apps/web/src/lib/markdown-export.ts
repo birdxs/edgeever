@@ -34,7 +34,7 @@ export const sanitizeExportPathSegment = (value: string, fallback: string) => {
   return WINDOWS_RESERVED_NAME.test(safeValue) ? `_${safeValue}` : safeValue;
 };
 
-const uniqueName = (candidate: string, usedNames: Set<string>) => {
+export const uniqueExportName = (candidate: string, usedNames: Set<string>) => {
   if (!usedNames.has(candidate.toLocaleLowerCase())) {
     usedNames.add(candidate.toLocaleLowerCase());
     return candidate;
@@ -61,7 +61,7 @@ export const buildNotebookExportPaths = (notebooks: Notebook[]) => {
     siblingNames.set(parentKey, usedNames);
     segmentById.set(
       notebook.id,
-      uniqueName(sanitizeExportPathSegment(notebook.name, "Untitled notebook"), usedNames)
+      uniqueExportName(sanitizeExportPathSegment(notebook.name, "Untitled notebook"), usedNames)
     );
   }
 
@@ -109,7 +109,7 @@ export const buildMarkdownFrontMatter = (memo: MemoDetail, notebookPath: string)
   "",
 ].join("\n");
 
-const getExtension = (resource: Resource) => {
+export const getExportResourceExtension = (resource: Resource) => {
   const filenameExtension = resource.filename?.match(/\.([a-z0-9]{1,12})$/i)?.[1];
   if (filenameExtension) {
     return filenameExtension.toLowerCase();
@@ -121,7 +121,7 @@ const getExtension = (resource: Resource) => {
 
 const encodeRelativePath = (path: string) => path.split("/").map(encodeURIComponent).join("/");
 
-const replaceResourceUrl = (markdown: string, resourceUrl: string, relativePath: string) => {
+export const replaceExportResourceUrl = (markdown: string, resourceUrl: string, relativePath: string) => {
   const encodedPath = encodeRelativePath(relativePath);
   const absoluteUrl = typeof window === "undefined" ? null : new URL(resourceUrl, window.location.origin).toString();
   let result = markdown.split(resourceUrl).join(encodedPath);
@@ -174,7 +174,7 @@ export const createMarkdownExport = async (
             const notebookPath = notebookPaths.get(memo.notebookId) ?? "Unfiled";
             const usedMemoNames = memoNamesByNotebook.get(notebookPath) ?? new Set<string>();
             memoNamesByNotebook.set(notebookPath, usedMemoNames);
-            const memoStem = uniqueName(
+            const memoStem = uniqueExportName(
               sanitizeExportPathSegment(memo.title?.trim() || "Untitled note", "Untitled note"),
               usedMemoNames
             );
@@ -183,8 +183,8 @@ export const createMarkdownExport = async (
             let markdown = memo.contentMarkdown;
 
             for (const resource of resourcesByMemo.get(memo.id) ?? []) {
-              const fallbackName = `${resource.kind}-${resource.id}.${getExtension(resource)}`;
-              const resourceName = uniqueName(
+              const fallbackName = `${resource.kind}-${resource.id}.${getExportResourceExtension(resource)}`;
+              const resourceName = uniqueExportName(
                 sanitizeExportPathSegment(resource.filename || fallbackName, fallbackName),
                 usedResourceNames
               );
@@ -193,7 +193,7 @@ export const createMarkdownExport = async (
               const file = new ZipPassThrough(`${notebookPath}/${relativePath}`);
               zip.add(file);
               file.push(new Uint8Array(await blob.arrayBuffer()), true);
-              markdown = replaceResourceUrl(markdown, resource.url, relativePath);
+              markdown = replaceExportResourceUrl(markdown, resource.url, relativePath);
             }
 
             const markdownFile = new ZipDeflate(`${notebookPath}/${memoStem}.md`, { level: 6 });

@@ -890,6 +890,99 @@
         }
       }
     },
+    "/api/v1/backups/json": {
+      "get": {
+        "summary": "Read a page of EdgeEver ZIP recovery data",
+        "description": "Returns active memo details, revision history, and resource metadata for browser-side EdgeEver ZIP generation. The resulting archive also contains human-readable Markdown. Trash is excluded.",
+        "parameters": [
+          { "name": "offset", "in": "query", "schema": { "type": "integer", "minimum": 0, "default": 0 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 50, "default": 25 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of logical backup data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "memos": { "type": "array", "items": { "$ref": "#/components/schemas/MemoDetail" } },
+                    "resources": { "type": "array", "items": { "$ref": "#/components/schemas/Resource" } },
+                    "revisions": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+                    "totalCount": { "type": "integer" },
+                    "nextOffset": { "type": ["integer", "null"] }
+                  },
+                  "required": ["memos", "resources", "revisions", "totalCount", "nextOffset"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/restores/json/notebooks": {
+      "post": {
+        "summary": "Import a batch of notebooks from an EdgeEver ZIP",
+        "description": "Interactive-user-only merge restore. Matching EdgeEver notebook IDs are overwritten.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": { "notebooks": { "type": "array", "minItems": 1, "maxItems": 100, "items": { "type": "object", "additionalProperties": true } } },
+                "required": ["notebooks"]
+              }
+            }
+          }
+        },
+        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+      }
+    },
+    "/api/v1/restores/json/memos": {
+      "post": {
+        "summary": "Import a batch of memos from an EdgeEver ZIP",
+        "description": "Interactive-user-only merge restore, including current content and revision history. Matching EdgeEver memo IDs are overwritten.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": { "memos": { "type": "array", "minItems": 1, "maxItems": 10, "items": { "type": "object", "additionalProperties": true } } },
+                "required": ["memos"]
+              }
+            }
+          }
+        },
+        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+      }
+    },
+    "/api/v1/restores/json/resources/{id}": {
+      "parameters": [
+        { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+      ],
+      "put": {
+        "summary": "Import one resource from an EdgeEver ZIP",
+        "description": "Interactive-user-only resource import. The multipart metadata field contains the structured EdgeEver ZIP resource record.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "metadata": { "type": "string" },
+                  "file": { "type": "string", "format": "binary" }
+                },
+                "required": ["metadata", "file"]
+              }
+            }
+          }
+        },
+        "responses": { "200": { "$ref": "#/components/responses/Ok" } }
+      }
+    },
     "/api/v1/resources": {
       "get": {
         "summary": "List resources and storage summary",
