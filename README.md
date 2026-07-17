@@ -97,7 +97,7 @@ The Chrome/Edge web clipper is complete and pending store publication.
 
 ## Native Clients
 
-The Android app is built with Expo and React Native. After securely connecting to a self-hosted instance, it runs that instance's current mobile PWA inside a restricted same-origin native container. This keeps the App UI, editing features, offline drafts, sync queue, settings, and import/export workflow aligned with the PWA without maintaining a second workspace implementation. Native bridges handle secure session reuse, external links, Android navigation, and exported-file sharing.
+The Android app is built with Expo and React Native as a true native client. It connects directly to a self-hosted EdgeEver API and implements the mobile workspace with native views instead of embedding the PWA, prioritizing fast startup, smooth lists, instant cached content, offline drafts, and background synchronization while keeping the PWA's features and visual language aligned.
 
 The desktop app remains on the roadmap and is planned to use Tauri.
 

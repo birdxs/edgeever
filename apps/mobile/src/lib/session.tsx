@@ -1,5 +1,6 @@
 import { createEdgeEverClient } from "@edgeever/client";
 import type { AuthUser } from "@edgeever/shared";
+import { useQueryClient } from "@tanstack/react-query";
 import * as SecureStore from "expo-secure-store";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
@@ -22,6 +23,7 @@ type SessionContextValue = {
 const SessionContext = createContext<SessionContextValue | null>(null);
 
 export const SessionProvider = ({ children }: { children: ReactNode }) => {
+  const queryClient = useQueryClient();
   const [isLoading, setIsLoading] = useState(true);
   const [session, setSession] = useState<MobileSession | null>(null);
 
@@ -56,11 +58,12 @@ export const SessionProvider = ({ children }: { children: ReactNode }) => {
       baseUrl: session.baseUrl,
       token: session.token,
       onUnauthorized: () => {
+        queryClient.clear();
         setSession(null);
         void SecureStore.deleteItemAsync(SESSION_KEY);
       },
     });
-  }, [session]);
+  }, [queryClient, session]);
 
   const signIn = useCallback(async (input: { baseUrl: string; username: string; password: string }) => {
     const baseUrl = normalizeInstanceUrl(input.baseUrl);
@@ -80,18 +83,20 @@ export const SessionProvider = ({ children }: { children: ReactNode }) => {
       user: authSession.user,
     };
 
+    queryClient.clear();
     await SecureStore.setItemAsync(SESSION_KEY, JSON.stringify(nextSession));
     setSession(nextSession);
-  }, []);
+  }, [queryClient]);
 
   const signOut = useCallback(async () => {
     if (client) {
       await client.logout().catch(() => undefined);
     }
 
+    queryClient.clear();
     await SecureStore.deleteItemAsync(SESSION_KEY);
     setSession(null);
-  }, [client]);
+  }, [client, queryClient]);
 
   const value = useMemo(
     () => ({

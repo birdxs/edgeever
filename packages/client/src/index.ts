@@ -1,6 +1,7 @@
 import type {
   ApiToken,
   AuthSession,
+  InstanceUser,
   CreatedApiToken,
   JsonBackupMemo,
   JsonBackupNotebook,
@@ -53,6 +54,14 @@ export type ListTagsResponse = {
 export type ListApiTokensResponse = {
   apiTokens: ApiToken[];
   availableScopes: string[];
+};
+
+export type ListUsersResponse = {
+  users: InstanceUser[];
+};
+
+export type UserResponse = {
+  user: InstanceUser;
 };
 
 export type MemoResponse = {
@@ -135,6 +144,26 @@ export const createEdgeEverClient = (options: EdgeEverClientOptions = {}) => {
     login: (payload: { username: string; password: string }) =>
       request<AuthSession>("/api/v1/auth/login", {
         method: "POST",
+        body: JSON.stringify(payload),
+      }),
+
+    changePassword: (payload: { currentPassword: string; newPassword: string; confirmPassword: string }) =>
+      request<{ ok: true }>("/api/v1/auth/change-password", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }),
+
+    listUsers: () => request<ListUsersResponse>("/api/v1/users"),
+
+    createUser: (payload: { username: string; displayName?: string | null; password: string }) =>
+      request<UserResponse>("/api/v1/users", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }),
+
+    updateUser: (userId: string, payload: { displayName?: string | null; password?: string; isDisabled?: boolean }) =>
+      request<UserResponse>(`/api/v1/users/${userId}`, {
+        method: "PATCH",
         body: JSON.stringify(payload),
       }),
 
