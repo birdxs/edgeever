@@ -590,7 +590,6 @@ export const WorkspaceScreen = () => {
     }
   };
 
-  const memoCount = notebooks.reduce((total, notebook) => total + notebook.memoCount, 0);
   const memos = useMemo(() => memosQuery.data?.pages.flatMap((page) => page.memos) ?? [], [memosQuery.data]);
   const searchResults = useMemo(() => searchQuery.data?.pages.flatMap((page) => page.memos) ?? [], [searchQuery.data]);
   const selectedMemo = memoDetailQuery.data?.memo ?? null;
@@ -1242,7 +1241,6 @@ export const WorkspaceScreen = () => {
         activeNotebookId={activeNotebookId}
         notebookSortMode={notebookSortMode}
         notebooks={notebooks}
-        notebooksMemoCount={memoCount}
         onClose={() => setNotebookPickerOpen(false)}
         onSelect={(notebookId) => {
           setActiveNotebookId(notebookId);
@@ -1699,7 +1697,6 @@ const NotebookPickerModal = ({
   activeNotebookId,
   notebookSortMode,
   notebooks,
-  notebooksMemoCount,
   onClose,
   onSelect,
   visible,
@@ -1707,7 +1704,6 @@ const NotebookPickerModal = ({
   activeNotebookId: string;
   notebookSortMode: MobileNotebookSortMode;
   notebooks: Notebook[];
-  notebooksMemoCount: number;
   onClose: () => void;
   onSelect: (notebookId: string) => void;
   visible: boolean;
@@ -1718,18 +1714,21 @@ const NotebookPickerModal = ({
   const notebookOptions = flattenNotebooks(notebooks, notebookSortMode);
   const searchQuery = searchText.trim();
   const childNotebookIds = getNotebookParentIdSet(notebooks);
+  const activeNotebookAncestorIds = getNotebookAncestorIds(notebooks, activeNotebookId);
   const visibleNotebookOptions = searchQuery
     ? filterNotebookOptions(notebookOptions, searchText)
     : filterCollapsedNotebookOptions(notebookOptions, collapsedNotebookIds);
   const activeNotebookName = activeNotebookId === ALL_NOTES_ID
     ? "全部笔记"
     : notebooks.find((notebook) => notebook.id === activeNotebookId)?.name ?? "全部笔记";
+  const allNotebookBranchesExpanded = childNotebookIds.size > 0 && Array.from(childNotebookIds).every((notebookId) => !collapsedNotebookIds.has(notebookId));
 
   useEffect(() => {
     if (visible) {
       setSearchText("");
+      setCollapsedNotebookIds(new Set(Array.from(childNotebookIds).filter((notebookId) => !activeNotebookAncestorIds.has(notebookId))));
     }
-  }, [visible]);
+  }, [visible, activeNotebookId, notebooks]);
 
   const toggleNotebookCollapsed = (notebookId: string) => {
     setCollapsedNotebookIds((current) => {
@@ -1743,6 +1742,10 @@ const NotebookPickerModal = ({
 
       return next;
     });
+  };
+
+  const toggleAllNotebookBranches = () => {
+    setCollapsedNotebookIds(allNotebookBranchesExpanded ? new Set(childNotebookIds) : new Set());
   };
 
   return (
@@ -1784,12 +1787,23 @@ const NotebookPickerModal = ({
               <Text numberOfLines={1} style={styles.panelValue}>
                 全部笔记
               </Text>
-              <Text style={styles.panelLabel}>{translate(`${notebooksMemoCount} 条笔记`)}</Text>
             </View>
             {activeNotebookId === ALL_NOTES_ID ? <Check color="#0f172a" size={18} /> : null}
           </Pressable>
 
-          <Text style={styles.label}>{searchQuery ? "匹配的笔记本" : "笔记本"}</Text>
+          <View style={styles.notebookPickerSectionHeader}>
+            <Text style={styles.label}>{searchQuery ? "匹配的笔记本" : "笔记本"}</Text>
+            {!searchQuery && childNotebookIds.size > 0 ? (
+              <Pressable
+                accessibilityLabel={allNotebookBranchesExpanded ? "收起全部笔记本" : "展开全部笔记本"}
+                accessibilityRole="button"
+                onPress={toggleAllNotebookBranches}
+                style={styles.notebookPickerToggleAll}
+              >
+                <Text style={styles.notebookPickerToggleAllText}>{allNotebookBranchesExpanded ? "收起全部" : "展开全部"}</Text>
+              </Pressable>
+            ) : null}
+          </View>
           {visibleNotebookOptions.map(({ depth, notebook }) => (
             <View
               key={notebook.id}
@@ -1804,9 +1818,8 @@ const NotebookPickerModal = ({
               )}
               <Pressable onPress={() => onSelect(notebook.id)} style={styles.moveNotebookSelectArea}>
                 <Text numberOfLines={1} style={styles.panelValue}>
-                  {depth > 0 ? `${"· ".repeat(depth)}${notebook.name}` : notebook.name}
+                  {notebook.name}
                 </Text>
-                <Text style={styles.panelLabel}>{translate(`${notebook.memoCount} 条笔记`)}</Text>
               </Pressable>
               {activeNotebookId === notebook.id ? <Check color="#0f172a" size={18} /> : null}
             </View>
@@ -2619,7 +2632,6 @@ const CreateMemoModal = ({
           activeNotebookId={targetNotebookId}
           notebookSortMode="manual"
           notebooks={notebooks}
-          notebooksMemoCount={notebooks.reduce((total, notebook) => total + notebook.memoCount, 0)}
           onClose={() => setNotebookPickerOpen(false)}
           onSelect={(nextNotebookId) => {
             setNotebookId(nextNotebookId);
@@ -4841,7 +4853,6 @@ const RichEditorModal = ({
           activeNotebookId={notebookId}
           notebookSortMode="manual"
           notebooks={notebooks}
-          notebooksMemoCount={notebooks.reduce((total, notebook) => total + notebook.memoCount, 0)}
           onClose={() => setNotebookPickerOpen(false)}
           onSelect={(nextNotebookId) => {
             setNotebookId(nextNotebookId);
@@ -5221,7 +5232,6 @@ const EditMemoModal = ({
           activeNotebookId={notebookId}
           notebookSortMode="manual"
           notebooks={notebooks}
-          notebooksMemoCount={notebooks.reduce((total, notebook) => total + notebook.memoCount, 0)}
           onClose={() => setNotebookPickerOpen(false)}
           onSelect={(nextNotebookId) => {
             setNotebookId(nextNotebookId);
@@ -6126,6 +6136,22 @@ const getNotebookParentIdSet = (notebooks: Notebook[]) => {
   }
 
   return parentIds;
+};
+
+const getNotebookAncestorIds = (notebooks: Notebook[], notebookId: string) => {
+  const byId = new Map(notebooks.map((notebook) => [notebook.id, notebook]));
+  const ancestorIds = new Set<string>();
+  let current = byId.get(notebookId);
+
+  while (current?.parentId) {
+    if (ancestorIds.has(current.parentId)) {
+      break;
+    }
+    ancestorIds.add(current.parentId);
+    current = byId.get(current.parentId);
+  }
+
+  return ancestorIds;
 };
 
 const filterCollapsedNotebookOptions = (options: NotebookOption[], collapsedNotebookIds: Set<string>) => {
@@ -8009,6 +8035,22 @@ const baseWorkspaceStyles = StyleSheet.create({
   notebookPickerHeaderText: {
     flex: 1,
     gap: 2,
+  },
+  notebookPickerSectionHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    minHeight: 36,
+  },
+  notebookPickerToggleAll: {
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  notebookPickerToggleAllText: {
+    color: "#64748b",
+    fontSize: 12,
+    fontWeight: "700",
   },
   notebookPickerScroll: {
     flexShrink: 1,
