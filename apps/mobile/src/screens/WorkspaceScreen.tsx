@@ -1767,6 +1767,8 @@ const SettingsView = ({
   const { translate } = useMobileLocale();
   const [activeTab, setActiveTab] = useState<SettingsTab | null>(null);
   const [localePickerOpen, setLocalePickerOpen] = useState(false);
+  const [localePickerAnchor, setLocalePickerAnchor] = useState<{ left: number; top: number; width: number } | null>(null);
+  const localeSelectRef = useRef<ComponentRef<typeof Pressable>>(null);
   const tabs: Array<{ key: SettingsTab; label: string; icon: ReactNode }> = [
     { key: "general", label: "常规设置", icon: <SlidersHorizontal color="#059669" size={17} /> },
     ...(isOwner ? [{ key: "users" as const, label: "成员管理", icon: <Users color="#059669" size={17} /> }] : []),
@@ -1775,6 +1777,12 @@ const SettingsView = ({
   ];
   const title = tabs.find((tab) => tab.key === activeTab)?.label ?? "我的";
   const activeLocaleLabel = MOBILE_LOCALE_OPTIONS.find((option) => option.value === localePreference)?.label ?? "跟随系统";
+  const openLocalePicker = () => {
+    localeSelectRef.current?.measureInWindow((left, top, width, height) => {
+      setLocalePickerAnchor({ left, top: top + height + 4, width });
+      setLocalePickerOpen(true);
+    });
+  };
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
@@ -1800,7 +1808,7 @@ const SettingsView = ({
                   <Text style={styles.settingsRowTitle}>界面语言</Text>
                   <Text style={styles.settingsRowDescription}>切换产品界面的显示语言。</Text>
                 </View>
-                <Pressable accessibilityLabel="界面语言" accessibilityRole="button" onPress={() => setLocalePickerOpen(true)} style={styles.settingsSelect}>
+                <Pressable accessibilityLabel="界面语言" accessibilityRole="button" onPress={openLocalePicker} ref={localeSelectRef} style={styles.settingsSelect}>
                   <Text style={styles.settingsSelectText}>{activeLocaleLabel}</Text>
                   <ChevronDown color="#64748b" size={18} />
                 </Pressable>
@@ -1887,25 +1895,30 @@ const SettingsView = ({
           </View>
         ) : renderContent()}
       </ScrollView>
-      <Modal animationType="fade" onRequestClose={() => setLocalePickerOpen(false)} transparent visible={localePickerOpen}>
-        <Pressable onPress={() => setLocalePickerOpen(false)} style={styles.actionSheetBackdrop}>
-          <Pressable style={[styles.actionSheet, styles.localePickerSheet]}>
-            <View style={styles.actionSheetHandle} />
-            <Text style={styles.actionSheetTitle}>界面语言</Text>
-            <Text style={styles.actionSheetSubtitle}>切换产品界面的显示语言。</Text>
-            <View style={styles.listActionDivider} />
-            {MOBILE_LOCALE_OPTIONS.map((option) => (
-              <SheetOptionRow
-                active={localePreference === option.value}
-                key={option.value}
-                label={option.label}
-                onPress={() => {
-                  onLocalePreferenceChange(option.value);
-                  setLocalePickerOpen(false);
-                }}
-              />
-            ))}
-          </Pressable>
+      <Modal animationType="fade" onRequestClose={() => setLocalePickerOpen(false)} statusBarTranslucent transparent visible={localePickerOpen && Boolean(localePickerAnchor)}>
+        <Pressable onPress={() => setLocalePickerOpen(false)} style={styles.localePickerBackdrop}>
+          {localePickerAnchor ? (
+            <View style={[styles.localePickerMenu, localePickerAnchor]}>
+              {MOBILE_LOCALE_OPTIONS.map((option) => {
+                const active = localePreference === option.value;
+                return (
+                  <Pressable
+                    accessibilityRole="radio"
+                    accessibilityState={{ checked: active }}
+                    key={option.value}
+                    onPress={() => {
+                      onLocalePreferenceChange(option.value);
+                      setLocalePickerOpen(false);
+                    }}
+                    style={[styles.localePickerOption, active && styles.localePickerOptionActive]}
+                  >
+                    <Text style={[styles.localePickerOptionText, active && styles.localePickerOptionTextActive]}>{option.label}</Text>
+                    {active ? <Check color="#047857" size={16} /> : null}
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : null}
         </Pressable>
       </Modal>
     </View>
@@ -5965,8 +5978,42 @@ const baseWorkspaceStyles = StyleSheet.create({
     justifyContent: "center",
     padding: 20,
   },
-  localePickerSheet: {
-    paddingBottom: 12,
+  localePickerBackdrop: {
+    flex: 1,
+  },
+  localePickerMenu: {
+    backgroundColor: "#ffffff",
+    borderColor: "#e2e8f0",
+    borderRadius: 8,
+    borderWidth: 1,
+    elevation: 8,
+    overflow: "hidden",
+    padding: 4,
+    position: "absolute",
+    shadowColor: "#0f172a",
+    shadowOffset: { height: 4, width: 0 },
+    shadowOpacity: 0.14,
+    shadowRadius: 10,
+  },
+  localePickerOption: {
+    alignItems: "center",
+    borderRadius: 6,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    minHeight: 38,
+    paddingHorizontal: 10,
+  },
+  localePickerOptionActive: {
+    backgroundColor: "#ecfdf5",
+  },
+  localePickerOptionText: {
+    color: "#334155",
+    flex: 1,
+    fontSize: 14,
+  },
+  localePickerOptionTextActive: {
+    color: "#047857",
+    fontWeight: "700",
   },
   settingsExampleDialog: {
     backgroundColor: "#ffffff",
