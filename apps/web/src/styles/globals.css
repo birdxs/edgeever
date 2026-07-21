@@ -610,6 +610,32 @@ textarea {
   background: #f3f4f6;
 }
 
+@media (max-width: 767px) {
+  .ProseMirror .tableWrapper,
+  .markdown-content .tableWrapper {
+    --mobile-table-column-width: clamp(5.5rem, calc((100vw - 3rem) / 3), 14rem);
+    width: 100%;
+  }
+
+  .ProseMirror table,
+  .markdown-content table {
+    min-width: 100% !important;
+  }
+
+  .ProseMirror table col,
+  .markdown-content table col {
+    width: var(--mobile-table-column-width) !important;
+  }
+
+  .ProseMirror th,
+  .ProseMirror td,
+  .markdown-content th,
+  .markdown-content td {
+    width: var(--mobile-table-column-width);
+    min-width: var(--mobile-table-column-width);
+  }
+}
+
 .ProseMirror th p,
 .ProseMirror td p,
 .markdown-content th p,

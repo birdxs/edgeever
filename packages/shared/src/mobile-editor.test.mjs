@@ -6,6 +6,7 @@ import {
   getMobileEditorImageScaleLabel,
   getMobileEditorImageWidthPresetLabel,
   getMobileEditorPlaceholder,
+  getMobileEditorTableMenuCopy,
   getMobileEditorToolbarActionLabel,
   getMobileEditorToolbarLabel,
   isMobileEditorActionDisabledInTableHeader,
@@ -39,6 +40,8 @@ describe("mobile editor contract", () => {
     expect(getMobileEditorPlaceholder("zh-CN")).toBe("开始记录...");
     expect(getMobileEditorPlaceholder("en-US")).toBe("Start writing...");
     expect(getMobileEditorToolbarLabel("zh-CN")).toBe("编辑器工具栏");
+    expect(getMobileEditorTableMenuCopy("zh-CN")).toEqual({ title: "表格操作", close: "关闭" });
+    expect(getMobileEditorTableMenuCopy("en-US")).toEqual({ title: "Table actions", close: "Close" });
     expect(getMobileEditorToolbarActionLabel("bulletList", "en-US")).toBe("Bullet list");
     expect(getMobileEditorToolbarActionLabel("insertTable", "zh-CN")).toBe("插入表格");
     expect(getMobileEditorImageScaleLabel("zh-CN")).toBe("图片显示尺寸");

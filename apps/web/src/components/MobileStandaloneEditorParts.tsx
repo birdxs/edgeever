@@ -1,12 +1,13 @@
-import { Bold, Check, ChevronDown, ImagePlus, List, Minus, Quote } from "lucide-react";
+import { Bold, Check, ChevronDown, ImagePlus, List, Minus, Quote, Table2 } from "lucide-react";
 import {
   MOBILE_EDITOR_TOOLBAR_ACTIONS,
+  getMobileEditorTableMenuCopy,
   getMobileEditorToolbarActionLabel,
   isMobileEditorActionDisabledInTableHeader,
   type MobileEditorTableActionId,
   type MobileEditorToolbarActionId,
 } from "@edgeever/shared/mobile-editor";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { NotebookMoveOption } from "@/lib/app-helpers";
 import type { MobileEditorSaveState } from "@/lib/mobile-editor-standalone";
 
@@ -61,19 +62,21 @@ export const MobileEditorToolbar = ({
   onSetHorizontalRule: () => void;
   onTableAction: (action: MobileEditorTableActionId) => void;
 }) => {
+  const [tableMenuOpen, setTableMenuOpen] = useState(false);
+  const tableMenuCopy = getMobileEditorTableMenuCopy("zh-CN");
   const icons: Record<MobileEditorToolbarActionId, ReactNode> = {
     image: <ImagePlus aria-hidden="true" size={18} strokeWidth={2} />,
     bold: <Bold aria-hidden="true" size={17} strokeWidth={2.4} />,
     bulletList: <List aria-hidden="true" size={18} strokeWidth={2.2} />,
     blockquote: <Quote aria-hidden="true" size={17} strokeWidth={2.2} />,
     horizontalRule: <Minus aria-hidden="true" size={18} strokeWidth={2.4} />,
-    insertTable: <TableActionGlyph label="T" />,
-    addTableRow: <TableActionGlyph label="R+" />,
-    deleteTableRow: <TableActionGlyph label="R−" />,
-    addTableColumn: <TableActionGlyph label="C+" />,
-    deleteTableColumn: <TableActionGlyph label="C−" />,
-    toggleTableHeader: <TableActionGlyph label="H" />,
-    deleteTable: <TableActionGlyph label="×" />,
+    insertTable: <Table2 aria-hidden="true" size={18} strokeWidth={2} />,
+    addTableRow: null,
+    deleteTableRow: null,
+    addTableColumn: null,
+    deleteTableColumn: null,
+    toggleTableHeader: null,
+    deleteTable: null,
   };
   const handlers: Record<MobileEditorToolbarActionId, () => void> = {
     image: onPickImage,
@@ -95,39 +98,91 @@ export const MobileEditorToolbar = ({
     blockquote: blockquoteActive,
   };
 
-  return (
-    <div className="mobile-editor-tool-row">
-      {MOBILE_EDITOR_TOOLBAR_ACTIONS
-        .filter(({ id, requiresTable }) => tableActive ? id !== "insertTable" : !requiresTable)
-        .map(({ id, requiresTable }) => {
-        const label = getMobileEditorToolbarActionLabel(id, "zh-CN");
+  useEffect(() => {
+    if (!tableActive) {
+      setTableMenuOpen(false);
+    }
+  }, [tableActive]);
 
-        return (
+  return (
+    <>
+      <div className="mobile-editor-tool-row">
+        {MOBILE_EDITOR_TOOLBAR_ACTIONS
+          .filter(({ id, requiresTable }) => !requiresTable && (!tableActive || id !== "insertTable"))
+          .map(({ id }) => {
+            const label = getMobileEditorToolbarActionLabel(id, "zh-CN");
+
+            return (
+              <button
+                key={id}
+                className="mobile-editor-tool-button"
+                type="button"
+                aria-label={label}
+                title={label}
+                aria-pressed={activeStates[id]}
+                disabled={disabled || (id === "insertTable" && tableActive)}
+                onPointerDown={(event) => event.preventDefault()}
+                onClick={handlers[id]}
+              >
+                {icons[id]}
+              </button>
+            );
+          })}
+        {tableActive && (
           <button
-            key={id}
-            className="mobile-editor-tool-button"
+            className="mobile-editor-tool-button mobile-editor-table-menu-trigger"
             type="button"
-            aria-label={label}
-            title={label}
-            aria-pressed={activeStates[id]}
-            disabled={disabled
-              || (requiresTable && !tableActive)
-              || (id === "insertTable" && tableActive)
-              || (isMobileEditorActionDisabledInTableHeader(id) && tableHeaderActive)}
+            aria-label={tableMenuCopy.title}
+            title={tableMenuCopy.title}
+            disabled={disabled}
             onPointerDown={(event) => event.preventDefault()}
-            onClick={handlers[id]}
+            onClick={() => setTableMenuOpen(true)}
           >
-            {icons[id]}
+            <Table2 aria-hidden="true" size={18} strokeWidth={2} />
+            <span>{tableMenuCopy.title}</span>
           </button>
-        );
-        })}
-    </div>
+        )}
+      </div>
+      {tableActive && tableMenuOpen && (
+        <div className="mobile-editor-sheet-backdrop" role="presentation" onClick={() => setTableMenuOpen(false)}>
+          <section
+            className="mobile-editor-table-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-label={tableMenuCopy.title}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mobile-editor-notebook-sheet-handle" aria-hidden="true" />
+            <div className="mobile-editor-notebook-sheet-header">
+              <h2>{tableMenuCopy.title}</h2>
+              <button type="button" onClick={() => setTableMenuOpen(false)}>{tableMenuCopy.close}</button>
+            </div>
+            <div className="mobile-editor-table-action-list">
+              {MOBILE_EDITOR_TOOLBAR_ACTIONS.filter(({ requiresTable }) => requiresTable).map(({ id }) => {
+                const label = getMobileEditorToolbarActionLabel(id, "zh-CN");
+                return (
+                  <button
+                    key={id}
+                    className={id === "deleteTable" ? "is-destructive" : undefined}
+                    type="button"
+                    disabled={disabled || (isMobileEditorActionDisabledInTableHeader(id) && tableHeaderActive)}
+                    onPointerDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      setTableMenuOpen(false);
+                      handlers[id]();
+                    }}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        </div>
+      )}
+    </>
   );
 };
-
-const TableActionGlyph = ({ label }: { label: string }) => (
-  <span aria-hidden="true" className="mobile-editor-table-glyph">{label}</span>
-);
 
 export const MobileEditorNotebookButton = ({
   label,

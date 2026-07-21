@@ -19,6 +19,7 @@ import {
   getMobileEditorImageScaleLabel,
   getMobileEditorImageWidthPresetLabel,
   getMobileEditorPlaceholder,
+  getMobileEditorTableMenuCopy,
   getMobileEditorToolbarActionLabel,
   getMobileEditorToolbarLabel,
   isMobileEditorActionDisabledInTableHeader,
@@ -26,7 +27,7 @@ import {
   type MobileEditorToolbarActionId,
 } from "@edgeever/shared/mobile-editor";
 import { useDOMImperativeHandle, type DOMImperativeFactory, type DOMProps } from "expo/dom";
-import { useCallback, useEffect, useMemo, useRef, type ReactNode, type Ref } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import {
   createMobileImageUploadPlaceholderSource,
   isMobileImageUploadPlaceholderSource,
@@ -67,6 +68,7 @@ const TRANSIENT_IMAGE_UPLOAD_META = "edgeeverImageUploadPlaceholder";
 const ignoreSearchResult = async () => undefined;
 
 export default function LocalTiptapEditor(props: LocalTiptapEditorProps) {
+  const [tableMenuOpen, setTableMenuOpen] = useState(false);
   const startedAtRef = useRef(performance.now());
   const changeTimerRef = useRef<number | null>(null);
   const imageUploadInFlightRef = useRef(false);
@@ -260,6 +262,13 @@ export default function LocalTiptapEditor(props: LocalTiptapEditorProps) {
       (activeEditor?.isActive("table") ? MOBILE_EDITOR_ACTIVE_FLAGS.table : 0) |
       (activeEditor?.isActive("tableHeader") ? MOBILE_EDITOR_ACTIVE_FLAGS.tableHeader : 0),
   });
+  const tableMenuCopy = getMobileEditorTableMenuCopy(props.locale);
+
+  useEffect(() => {
+    if (!(toolbarState & MOBILE_EDITOR_ACTIVE_FLAGS.table)) {
+      setTableMenuOpen(false);
+    }
+  }, [toolbarState]);
 
   const insertImage = async () => {
     if (!editor || imageUploadInFlightRef.current) {
@@ -319,12 +328,12 @@ export default function LocalTiptapEditor(props: LocalTiptapEditorProps) {
     blockquote: <QuoteIcon />,
     horizontalRule: <MinusIcon />,
     insertTable: <TableGridIcon />,
-    addTableRow: <TableActionGlyph label="R+" />,
-    deleteTableRow: <TableActionGlyph label="R−" />,
-    addTableColumn: <TableActionGlyph label="C+" />,
-    deleteTableColumn: <TableActionGlyph label="C−" />,
-    toggleTableHeader: <TableActionGlyph label="H" />,
-    deleteTable: <TableActionGlyph label="×" />,
+    addTableRow: null,
+    deleteTableRow: null,
+    addTableColumn: null,
+    deleteTableColumn: null,
+    toggleTableHeader: null,
+    deleteTable: null,
   };
   const toolbarHandlers: Record<MobileEditorToolbarActionId, () => void> = {
     image: () => void insertImage(),
@@ -346,23 +355,66 @@ export default function LocalTiptapEditor(props: LocalTiptapEditorProps) {
       <style>{getEditorStyles(props.theme)}</style>
       <div aria-label={getMobileEditorToolbarLabel(props.locale)} className="edgeever-editor-toolbar" role="toolbar">
         {MOBILE_EDITOR_TOOLBAR_ACTIONS
-          .filter((action) => toolbarState & MOBILE_EDITOR_ACTIVE_FLAGS.table
-            ? action.id !== "insertTable"
-            : !action.requiresTable)
+          .filter((action) => !action.requiresTable
+            && (!(toolbarState & MOBILE_EDITOR_ACTIVE_FLAGS.table) || action.id !== "insertTable"))
           .map((action) => (
-          <ToolbarButton
-            key={action.id}
-            active={action.activeFlag > 0 && Boolean(toolbarState & action.activeFlag)}
-            disabled={(action.requiresTable && !(toolbarState & MOBILE_EDITOR_ACTIVE_FLAGS.table))
-              || (action.id === "insertTable" && Boolean(toolbarState & MOBILE_EDITOR_ACTIVE_FLAGS.table))
-              || (isMobileEditorActionDisabledInTableHeader(action.id)
-                && Boolean(toolbarState & MOBILE_EDITOR_ACTIVE_FLAGS.tableHeader))}
-            icon={toolbarIcons[action.id]}
-            label={getMobileEditorToolbarActionLabel(action.id, props.locale)}
-            onRun={toolbarHandlers[action.id]}
-          />
+            <ToolbarButton
+              key={action.id}
+              active={action.activeFlag > 0 && Boolean(toolbarState & action.activeFlag)}
+              disabled={action.id === "insertTable" && Boolean(toolbarState & MOBILE_EDITOR_ACTIVE_FLAGS.table)}
+              icon={toolbarIcons[action.id]}
+              label={getMobileEditorToolbarActionLabel(action.id, props.locale)}
+              onRun={toolbarHandlers[action.id]}
+            />
           ))}
+        {Boolean(toolbarState & MOBILE_EDITOR_ACTIVE_FLAGS.table) && (
+          <button
+            aria-label={tableMenuCopy.title}
+            className="edgeever-table-menu-trigger"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => setTableMenuOpen(true)}
+            type="button"
+          >
+            <TableGridIcon />
+            <span>{tableMenuCopy.title}</span>
+          </button>
+        )}
       </div>
+      {Boolean(toolbarState & MOBILE_EDITOR_ACTIVE_FLAGS.table) && tableMenuOpen && (
+        <div className="edgeever-table-menu-backdrop" role="presentation" onMouseDown={() => setTableMenuOpen(false)}>
+          <section
+            aria-label={tableMenuCopy.title}
+            aria-modal="true"
+            className="edgeever-table-menu-sheet"
+            role="dialog"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="edgeever-table-menu-handle" aria-hidden="true" />
+            <div className="edgeever-table-menu-header">
+              <strong>{tableMenuCopy.title}</strong>
+              <button type="button" onClick={() => setTableMenuOpen(false)}>{tableMenuCopy.close}</button>
+            </div>
+            <div className="edgeever-table-menu-actions">
+              {MOBILE_EDITOR_TOOLBAR_ACTIONS.filter((action) => action.requiresTable).map((action) => (
+                <button
+                  key={action.id}
+                  className={action.id === "deleteTable" ? "is-destructive" : undefined}
+                  disabled={isMobileEditorActionDisabledInTableHeader(action.id)
+                    && Boolean(toolbarState & MOBILE_EDITOR_ACTIVE_FLAGS.tableHeader)}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    setTableMenuOpen(false);
+                    toolbarHandlers[action.id]();
+                  }}
+                  type="button"
+                >
+                  {getMobileEditorToolbarActionLabel(action.id, props.locale)}
+                </button>
+              ))}
+            </div>
+          </section>
+        </div>
+      )}
       <EditorContent editor={editor} />
     </div>
   );
@@ -467,10 +519,6 @@ const TableGridIcon = () => (
     <rect height="16" rx="1" width="18" x="3" y="4" />
     <path d="M3 10h18M9 4v16M15 4v16" />
   </EditorIcon>
-);
-
-const TableActionGlyph = ({ label }: { label: string }) => (
-  <span aria-hidden="true" className="edgeever-table-action-glyph">{label}</span>
 );
 
 const mapImageSources = (doc: EditorDoc, mapSource: (source: string) => string): EditorDoc => {
@@ -907,7 +955,18 @@ const getEditorStyles = (theme: "light" | "dark") => `
   .edgeever-editor-toolbar button { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 36px; min-height: 32px; padding: 0; border: 1px solid transparent; border-radius: 999px; background: transparent; color: ${theme === "dark" ? "#cbd5e1" : "#64748b"}; }
   .edgeever-editor-toolbar button:active, .edgeever-editor-toolbar button.is-active { border-color: ${theme === "dark" ? "#166534" : "#bbf7d0"}; background: ${theme === "dark" ? "#14532d" : "#ecfdf5"}; color: ${theme === "dark" ? "#86efac" : "#047857"}; }
   .edgeever-editor-toolbar button:disabled { opacity: 0.38; }
-  .edgeever-table-action-glyph { font-size: 12px; font-weight: 800; letter-spacing: -0.03em; }
+  .edgeever-editor-toolbar .edgeever-table-menu-trigger { gap: 6px; width: auto; padding-inline: 10px; font-size: 13px; font-weight: 700; }
+  .edgeever-table-menu-backdrop { position: fixed; inset: 0; z-index: 50; display: flex; align-items: flex-end; background: ${theme === "dark" ? "rgba(2, 6, 23, 0.62)" : "rgba(15, 23, 42, 0.22)"}; }
+  .edgeever-table-menu-sheet { width: 100%; border-radius: 18px 18px 0 0; padding: 8px 0 max(10px, env(safe-area-inset-bottom)); background: ${theme === "dark" ? "#1e293b" : "#fff"}; box-shadow: 0 -18px 45px rgba(15, 23, 42, 0.16); }
+  .edgeever-table-menu-handle { width: 38px; height: 4px; margin: 2px auto 8px; border-radius: 999px; background: #cbd5e1; }
+  .edgeever-table-menu-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid ${theme === "dark" ? "#334155" : "#f1f5f9"}; padding: 0 16px 10px; }
+  .edgeever-table-menu-header strong { color: ${theme === "dark" ? "#f8fafc" : "#0f172a"}; font-size: 16px; }
+  .edgeever-table-menu-header button { min-height: 32px; border: 0; border-radius: 999px; padding: 6px 10px; background: ${theme === "dark" ? "#334155" : "#f8fafc"}; color: ${theme === "dark" ? "#cbd5e1" : "#64748b"}; font: inherit; font-size: 14px; font-weight: 650; }
+  .edgeever-table-menu-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 12px; }
+  .edgeever-table-menu-actions button { min-height: 48px; border: 0; border-radius: 10px; padding: 8px; background: ${theme === "dark" ? "#334155" : "#f8fafc"}; color: ${theme === "dark" ? "#e2e8f0" : "#334155"}; font: inherit; font-size: 15px; font-weight: 650; }
+  .edgeever-table-menu-actions button:active { background: ${theme === "dark" ? "#14532d" : "#ecfdf5"}; color: ${theme === "dark" ? "#86efac" : "#047857"}; }
+  .edgeever-table-menu-actions button:disabled { color: #94a3b8; opacity: 0.55; }
+  .edgeever-table-menu-actions button.is-destructive { background: ${theme === "dark" ? "#4c0519" : "#fff1f2"}; color: ${theme === "dark" ? "#fda4af" : "#be123c"}; }
   .tiptap { min-height: 100%; outline: none; }
   .edgeever-editor-shell > div:last-child { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
   .edgeever-editor-content { min-height: 100%; padding: 18px 12px 32px; font-size: 17px; line-height: 1.7; word-break: break-word; caret-color: #0f766e; }
@@ -919,10 +978,10 @@ const getEditorStyles = (theme: "light" | "dark") => `
   .edgeever-editor-content code { border-radius: 4px; padding: 2px 4px; background: ${theme === "dark" ? "#1e293b" : "#f1f5f9"}; }
   .edgeever-editor-content pre code { padding: 0; background: transparent; }
   .edgeever-editor-content img { display: block; max-width: 100%; height: auto; margin: 14px auto; border-radius: 10px; }
-  .edgeever-editor-content .tableWrapper { width: fit-content; max-width: 100%; overflow-x: auto; margin-top: 20px; margin-right: auto; margin-bottom: 20px; margin-left: 0; border: 1px solid ${theme === "dark" ? "#334155" : "#d8d8d8"}; border-radius: 2px; background: ${theme === "dark" ? "#0f172a" : "#fff"}; overscroll-behavior-inline: contain; scrollbar-color: rgba(100, 116, 139, 0.28) transparent; }
-  .edgeever-editor-content table { width: max-content; min-width: 42rem !important; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
-  .edgeever-editor-content table col { width: 14rem !important; }
-  .edgeever-editor-content th, .edgeever-editor-content td { position: relative; width: 14rem; min-width: 14rem; border: 0; border-right: 1px solid ${theme === "dark" ? "#334155" : "#dedede"}; border-bottom: 1px solid ${theme === "dark" ? "#334155" : "#dedede"}; padding: 7px 12px; text-align: left; vertical-align: top; overflow-wrap: anywhere; line-height: 1.4; transition: background-color 120ms ease; }
+  .edgeever-editor-content .tableWrapper { --mobile-table-column-width: clamp(5.5rem, calc((100vw - 3rem) / 3), 14rem); width: 100%; max-width: 100%; overflow-x: auto; margin-top: 20px; margin-right: auto; margin-bottom: 20px; margin-left: 0; border: 1px solid ${theme === "dark" ? "#334155" : "#d8d8d8"}; border-radius: 2px; background: ${theme === "dark" ? "#0f172a" : "#fff"}; overscroll-behavior-inline: contain; scrollbar-color: rgba(100, 116, 139, 0.28) transparent; }
+  .edgeever-editor-content table { width: max-content; min-width: 100% !important; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+  .edgeever-editor-content table col { width: var(--mobile-table-column-width) !important; }
+  .edgeever-editor-content th, .edgeever-editor-content td { position: relative; width: var(--mobile-table-column-width); min-width: var(--mobile-table-column-width); border: 0; border-right: 1px solid ${theme === "dark" ? "#334155" : "#dedede"}; border-bottom: 1px solid ${theme === "dark" ? "#334155" : "#dedede"}; padding: 7px 12px; text-align: left; vertical-align: top; overflow-wrap: anywhere; line-height: 1.4; transition: background-color 120ms ease; }
   .edgeever-editor-content th { background: ${theme === "dark" ? "#27303f" : "#f0f0f0"}; color: ${theme === "dark" ? "#f8fafc" : "#111827"}; font-size: 14px; font-weight: 700; }
   .edgeever-editor-content th:last-child, .edgeever-editor-content td:last-child { border-right: 0; }
   .edgeever-editor-content tr:last-child td { border-bottom: 0; }

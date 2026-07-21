@@ -237,10 +237,12 @@ input {
   color: #334155;
 }
 
-.mobile-editor-table-glyph {
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: -0.03em;
+.mobile-editor-table-menu-trigger {
+  gap: 6px;
+  width: auto;
+  padding-inline: 10px;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .mobile-editor-sheet-backdrop {
@@ -252,7 +254,8 @@ input {
   background: rgb(15 23 42 / 0.22);
 }
 
-.mobile-editor-notebook-sheet {
+.mobile-editor-notebook-sheet,
+.mobile-editor-table-sheet {
   width: 100%;
   max-height: 68dvh;
   overflow: hidden;
@@ -275,7 +278,8 @@ input {
 :root.dark .mobile-editor-header,
 :root.dark .mobile-editor-title,
 :root.dark .mobile-editor-tags,
-:root.dark .mobile-editor-notebook-sheet {
+:root.dark .mobile-editor-notebook-sheet,
+:root.dark .mobile-editor-table-sheet {
   background: #1e293b;
   color: #f8fafc;
 }
@@ -388,6 +392,48 @@ input {
   color: #047857;
 }
 
+.mobile-editor-table-action-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 12px;
+}
+
+.mobile-editor-table-action-list button {
+  min-height: 48px;
+  border: 0;
+  border-radius: 10px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.mobile-editor-table-action-list button:active {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.mobile-editor-table-action-list button:disabled {
+  color: #94a3b8;
+  opacity: 0.55;
+}
+
+.mobile-editor-table-action-list button.is-destructive {
+  background: #fff1f2;
+  color: #be123c;
+}
+
+:root.dark .mobile-editor-table-action-list button {
+  background: #334155;
+  color: #e2e8f0;
+}
+
+:root.dark .mobile-editor-table-action-list button.is-destructive {
+  background: #4c0519;
+  color: #fda4af;
+}
+
 .mobile-editor-notebook-option:active {
   background: #f1f5f9;
 }
@@ -455,7 +501,8 @@ input {
 }
 
 .edgeever-mobile-tiptap-content .tableWrapper {
-  width: fit-content;
+  --mobile-table-column-width: clamp(5.5rem, calc((100vw - 3rem) / 3), 14rem);
+  width: 100%;
   max-width: 100%;
   overflow-x: auto;
   margin-top: 1.25rem;
@@ -471,21 +518,21 @@ input {
 
 .edgeever-mobile-tiptap-content table {
   width: max-content;
-  min-width: 42rem !important;
+  min-width: 100% !important;
   border-collapse: separate;
   border-spacing: 0;
   table-layout: fixed;
 }
 
 .edgeever-mobile-tiptap-content table col {
-  width: 14rem !important;
+  width: var(--mobile-table-column-width) !important;
 }
 
 .edgeever-mobile-tiptap-content th,
 .edgeever-mobile-tiptap-content td {
   position: relative;
-  width: 14rem;
-  min-width: 14rem;
+  width: var(--mobile-table-column-width);
+  min-width: var(--mobile-table-column-width);
   border: 0;
   border-right: 1px solid #dedede;
   border-bottom: 1px solid #dedede;

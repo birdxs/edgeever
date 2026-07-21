@@ -54,6 +54,10 @@ const MOBILE_EDITOR_COPY = {
   "zh-CN": {
     placeholder: "开始记录...",
     toolbar: "编辑器工具栏",
+    tableMenu: {
+      title: "表格操作",
+      close: "关闭",
+    },
     actions: {
       image: "上传图片",
       bold: "加粗",
@@ -79,6 +83,10 @@ const MOBILE_EDITOR_COPY = {
   "en-US": {
     placeholder: "Start writing...",
     toolbar: "Editor toolbar",
+    tableMenu: {
+      title: "Table actions",
+      close: "Close",
+    },
     actions: {
       image: "Upload image",
       bold: "Bold",
@@ -108,6 +116,9 @@ export const getMobileEditorPlaceholder = (locale: MobileEditorLocale): string =
 
 export const getMobileEditorToolbarLabel = (locale: MobileEditorLocale): string =>
   MOBILE_EDITOR_COPY[locale].toolbar;
+
+export const getMobileEditorTableMenuCopy = (locale: MobileEditorLocale) =>
+  MOBILE_EDITOR_COPY[locale].tableMenu;
 
 export const getMobileEditorToolbarActionLabel = (
   action: MobileEditorToolbarActionId,
