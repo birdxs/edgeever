@@ -5566,10 +5566,10 @@ const resetDemoData = async (env: Bindings, scheduledTime: number) => {
     db.prepare(`DELETE FROM memos_fts`),
     db.prepare(`DELETE FROM resources`),
     db.prepare(`DELETE FROM memo_revisions`),
-    db.prepare(`DELETE FROM memo_contents WHERE memo_id NOT IN (${memoPlaceholders})`).bind(...DEMO_SEED_MEMO_IDS),
-    db.prepare(`DELETE FROM memos WHERE id NOT IN (${memoPlaceholders})`).bind(...DEMO_SEED_MEMO_IDS),
+    db.prepare(`DELETE FROM memo_contents`),
+    db.prepare(`DELETE FROM memos`),
     db.prepare(`UPDATE notebooks SET parent_id = NULL`),
-    db.prepare(`DELETE FROM notebooks WHERE id NOT IN (${notebookPlaceholders})`).bind(...DEMO_SEED_NOTEBOOK_IDS),
+    db.prepare(`DELETE FROM notebooks`),
     db.prepare(`DELETE FROM api_tokens`),
     db.prepare(`DELETE FROM audit_events`),
   ];
